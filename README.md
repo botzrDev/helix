@@ -22,33 +22,34 @@ ADR-001, 002, 003, 005, 006 are amended; see ADR-008 Part G and ADR-009 Part G b
 
 ## Documentation
 
-Companion set to `HELIX_PRD_v2.md`. Read in this order.
+Read in this order. Interface files landed with HLX-9 (PR #3). Remaining docs land with HLX-44 (Part G amendments applied).
 
 | Document | Purpose |
 |---|---|
-| `adr/ADR-001` to `ADR-007` | The irreversible decisions and why the alternatives were rejected (companion docs) |
-| `adr/ADR-008`, `adr/ADR-009` | Audit resolution and in-process delegation; Part G of each is the amendment index (companion docs) |
-| [`interfaces/state-machine.md`](interfaces/state-machine.md) | Authoritative invocation table; every later ticket cites its cells |
+| [`HELIX_PRDv2.md`](HELIX_PRDv2.md) | Product requirements. Sections 3, 4, and 5.5 are superseded by `interfaces/` |
+| `adr/ADR-001` to `ADR-007` | Irreversible decisions (companion / project knowledge until checked in) |
+| `adr/ADR-008`, `adr/ADR-009` | Audit resolution and in-process delegation; Part G of each is the amendment index |
+| [`interfaces/state-machine.md`](interfaces/state-machine.md) | Authoritative invocation table; every later ticket cites its cells. `Described` is the `helix.describe` success transition |
 | [`interfaces/audit-record.md`](interfaces/audit-record.md) | Deterministic CBOR record, framing, header, caps side files |
 | [`interfaces/delegate.md`](interfaces/delegate.md) | `helix:delegate/invoke` identity, bounds, errors, audit, semaphore ownership |
 | [`interfaces/helix-caps-api.rs`](interfaces/helix-caps-api.rs) | `CapabilitySet` contract the M1 crate implements. Spec sketch, not a workspace member |
 | [`wit/helix-tool.wit`](wit/helix-tool.wit) | The only world a tool may target |
 | [`interfaces/gateway-protocol.md`](interfaces/gateway-protocol.md) | JSON-RPC methods, headers, error codes, the internal `Request` seam |
-| `policy-format.md` | Operator-facing policy TOML, validation rules, reload semantics (companion docs) |
-| `test-plan.md` | Stable test IDs per crate, adversarial suite, static gates (companion docs) |
-| `milestone-plan.md` | Crate build order, tickets sized for one bare prompt each (companion docs) |
-| `benchmark-protocol.md` | Reference hardware, harness, gated numbers (companion docs) |
-| `runbook.md` | Deployment, config, registration, audit handling, alerts, incidents (companion docs) |
-| `tool-author-guide.md` | External-facing: build, test, and ship a tool (companion docs) |
-| `security-checklist.md` | Threat model rows mapped to code paths and tests; release gate (companion docs) |
+| [`policy-format.md`](policy-format.md) | Operator-facing policy TOML, validation rules 1–12, reload semantics |
+| [`test-plan.md`](test-plan.md) | Stable test IDs per crate, adversarial suite, static gates |
+| [`milestone-plan.md`](milestone-plan.md) | 14-week crate build order; tickets HLX-5 through HLX-43 |
+| [`benchmark-protocol.md`](benchmark-protocol.md) | Reference hardware, harness, gated numbers |
+| [`runbook.md`](runbook.md) | Deployment, config, registration, audit / witness handling, alerts, incidents |
+| [`tool-author-guide.md`](tool-author-guide.md) | External-facing: build, test, delegate, and ship a tool |
+| [`security-checklist.md`](security-checklist.md) | Threat model rows mapped to code paths and tests; release gate |
 
-Open items that need a human decision before M1 starts (ADR-008/009 Part H):
+Cycle 1 facts (decided 2026-09-03) are written into the matching docs above. Linear HLX-1 through HLX-4 stay open until those tickets are closed deliberately:
 
-1. Reference hardware for benchmarks (benchmark-protocol section 1).
-2. Which OAuth issuer will be used, and confirmation it supports EdDSA and `cnf.jkt` (and mints `sub` as the JWK thumbprint).
-3. Audit retention period and off-host witness-sink destination.
-4. Whether `wasi:http` outbound is P0 or slips to P1.
-5. The pinned BENCH-4 number.
+1. **D-2 / HLX-1** — reference hardware: Hetzner AX42-1 (see `benchmark-protocol.md`).
+2. **D-3 / HLX-3** — OAuth issuer: self-hosted Keycloak, EdDSA-only, `sub` = `cnf.jkt`; URL `https://<host>/realms/helix` (see `runbook.md`).
+3. **D-4 / HLX-4** — 90 days local audit retention; witness sink Hetzner Object Storage with Object Lock + SigV4 (see `runbook.md`).
+4. **D-1 / HLX-2** — `wasi:http` outbound is P0; M4-07 stays in the 14-week plan (see `HELIX_PRDv2.md` §6.2).
+5. **D-5 / HLX-8** — pinned BENCH-4 gate value (still open; left to walking-skeleton measurement).
 
 ## WIT
 

@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/helix-caps",
+    "crates/helix-policy",
+    "crates/helix-runtime",
+    "crates/helix-gateway",
+    "crates/helix-audit",
+    "crates/helix-sdk",
+    "crates/helix-ctl",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/botzrDev/helix"
+rust-version = "1.86"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+wasmtime = "36.0"
+wasmtime-wasi = "36.0"
+wit-bindgen = "0.44"
+tokio = "1"
+axum = "0.8"
+cap-std = "3"
+
+[workspace.lints.rust]
+unexpected_cfgs = "warn"
+
+[workspace.lints.clippy]
+pedantic = "warn"

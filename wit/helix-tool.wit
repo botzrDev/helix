@@ -1,0 +1,155 @@
+// The only world a HELIX tool component may target. Versioned; breaking
+// changes bump the major version and require a new alias table entry.
+//
+// `delegate` is ADR-009 A.2. Host implementation is M4-08; tools may import
+// it now. Hello-world does not call it.
+
+package helix:tool@1.0.0;
+
+interface types {
+    /// Errors a tool may return. The host maps these to JSON-RPC error codes
+    /// (see interfaces/gateway-protocol.md, section 4).
+    variant invoke-error {
+        /// Input failed the tool's own semantic checks. Host already validated
+        /// the shape against `signature`, so this is domain validation only.
+        invalid-input(string),
+        /// The tool attempted an operation and the host refused it. The tool
+        /// should surface this rather than retry.
+        capability-denied(string),
+        /// Anything else. Message is logged, not returned to the caller verbatim.
+        internal(string),
+    }
+
+    /// Returned by `signature`. `input-schema` and `output-schema` are JSON
+    /// Schema draft 2020-12 documents. The host validates request payloads
+    /// against `input-schema` before instantiation and result bytes against
+    /// `output-schema` before returning them.
+    record tool-signature {
+        name: string,
+        version: string,
+        input-schema: string,
+        output-schema: string,
+    }
+}
+
+/// Lattice grants the parent may request for a child. Budget is a sibling
+/// (ADR-008 A.4); it is not a field of this record.
+interface caps {
+    enum file-mode {
+        read,
+        read-write,
+    }
+
+    record file-grant {
+        canonical-path: string,
+        mode: file-mode,
+    }
+
+    /// `methods` is a MethodMask: GET=0, HEAD=1, POST=2, PUT=3, PATCH=4, DELETE=5.
+    record host-grant {
+        authority: string,
+        methods: u8,
+    }
+
+    record capability-set {
+        /// Bitset over Interface (stdio=0, clocks=1, random=2, filesystem=3, http-outbound=4).
+        interfaces: u64,
+        files: list<file-grant>,
+        hosts: list<host-grant>,
+    }
+
+    record resource-budget {
+        preempt-ticks: u32,
+        wall-clock-ms: u32,
+        memory-bytes: u64,
+        output-bytes: u32,
+        max-delegation-depth: u32,
+        max-children: u32,
+        max-concurrent-instances: u32,
+    }
+
+    record resource-usage {
+        preempt-ticks: u32,
+        wall-clock-ms: u32,
+        memory-bytes: u64,
+        output-bytes: u32,
+    }
+}
+
+/// ADR-009 A.2. The only way to create a child invocation.
+interface delegate {
+    use types.{invoke-error};
+    use caps.{capability-set, resource-budget, resource-usage};
+
+    variant tool-ref {
+        alias(string),
+        digest(list<u8>),
+    }
+
+    variant kill-cause {
+        preempted,
+        wall-clock,
+        memory,
+        output,
+        parent-dropped,
+    }
+
+    record delegation-request {
+        /// Alias or digest, resolved against the parent's snapshot.
+        tool: tool-ref,
+        /// Must be a subset of the parent's effective set.
+        requested: capability-set,
+        /// Absent = min(parent budget, child policy budget).
+        budget: option<resource-budget>,
+        /// Validated against the child's input-schema before provisioning.
+        input: list<u8>,
+    }
+
+    /// Mirrors the JSON-RPC success shape.
+    record delegation-result {
+        request-id: string,
+        digest: list<u8>,
+        output: list<u8>,
+        usage: resource-usage,
+    }
+
+    variant delegate-error {
+        unknown-tool,
+        denied,
+        escalation(string),
+        depth,
+        fanout,
+        stale-snapshot,
+        invalid-input(string),
+        audit-unavailable,
+        /// Provision failure.
+        child-failed(string),
+        /// Preempted, wall-clock, memory, output, parent-dropped.
+        child-killed(kill-cause),
+        child-tool-error(invoke-error),
+    }
+
+    invoke: func(req: delegation-request) -> result<delegation-result, delegate-error>;
+}
+
+world tool {
+    // Standard CLI imports. Which of these are actually linked at runtime is
+    // decided per invocation by the CapabilitySet; an unlinked import causes
+    // instantiation to fail closed.
+    include wasi:cli/imports@0.2.0;
+
+    // Linked only when CapabilitySet.interfaces has the HTTP_OUTBOUND bit.
+    // The host implementation enforces HostGrant.
+    import wasi:http/outgoing-handler@0.2.0;
+
+    import delegate;
+
+    use types.{invoke-error, tool-signature};
+
+    /// Called once at registration. Must be pure and fast.
+    export signature: func() -> tool-signature;
+
+    /// Called once per invocation. `input` has already been validated against
+    /// `input-schema`. Output is capped at Budget.output-bytes.
+    export invoke: func(input: list<u8>) -> result<list<u8>, invoke-error>;
+}

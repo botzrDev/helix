@@ -3,3 +3,5 @@
 .idea/
 .vscode/
 *.swp
+tests/fixtures/hello-world/target/
+tests/fixtures/hello-world/src/bindings.rs

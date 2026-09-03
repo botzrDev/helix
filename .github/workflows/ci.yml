@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  st1-warnings:
+    name: ST-1 warnings denied
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-targets
+
+  st2-clippy:
+    name: ST-2 clippy pedantic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+
+  st3-fmt:
+    name: ST-3 rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  st4-unsafe:
+    name: ST-4 unsafe forbid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require forbid(unsafe_code) except helix-runtime
+        run: |
+          set -euo pipefail
+          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-ctl; do
+            if ! grep -R -q --include='*.rs' 'forbid(unsafe_code)' "crates/${crate}/src"; then
+              echo "missing #![forbid(unsafe_code)] in ${crate}"
+              exit 1
+            fi
+          done
+          if grep -R -q --include='*.rs' 'forbid(unsafe_code)' crates/helix-runtime/src; then
+            echo "helix-runtime must be allowed to use unsafe"
+            exit 1
+          fi
+
+  st5-miri:
+    name: ST-5 miri caps and audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly miri test -p helix-caps -p helix-audit
+
+  st6-deny:
+    name: ST-6 cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

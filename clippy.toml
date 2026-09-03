@@ -1,0 +1,5 @@
+# ADR-003: no unconstrained tokio::spawn. Use an explicit JoinSet / runtime-owned task API.
+disallowed-methods = [
+    "tokio::spawn",
+    "tokio::task::spawn",
+]

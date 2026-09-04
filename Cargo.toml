@@ -29,6 +29,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 serde_json = "1.0.151"
 proptest = "1.11.0"
+toml = "0.8.23"
+base64 = "0.22.1"
+log = "0.4.27"
 
 [workspace.lints.rust]
 unexpected_cfgs = "warn"

@@ -7,5 +7,16 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[dependencies]
+base64 = { workspace = true }
+helix-caps = { path = "../helix-caps" }
+log = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true

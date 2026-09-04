@@ -4,6 +4,11 @@
 /// lattice element (ADR-008 A.4). Does not participate in `is_subset_of` or
 /// `meet`.
 ///
+/// Lattice vs non-lattice: authority attenuation uses
+/// [`crate::CapabilitySet::is_subset_of`] / [`crate::CapabilitySet::attenuate`]
+/// / [`crate::CapabilitySet::meet`]. Resource composition uses [`Self::is_within`]
+/// and [`Self::min`] separately — never folded into the capability lattice.
+///
 /// Field list matches landed WIT `resource-budget` (ADR-009 A.2): the original
 /// four ceilings plus the three tree/admission bounds. `epoch_ticks` is
 /// renamed `preempt_ticks` (ADR-008 E.1).

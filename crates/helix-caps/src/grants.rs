@@ -74,6 +74,12 @@ impl MethodMask {
         self.0 & !other.0 == 0
     }
 
+    /// Bitwise intersection (meet) of two masks.
+    #[must_use]
+    pub(crate) fn intersection(self, other: MethodMask) -> MethodMask {
+        Self(self.0 & other.0)
+    }
+
     /// Methods set in this mask, in bit order (for wire encoding).
     pub(crate) fn methods(self) -> Vec<Method> {
         const ALL: [Method; 6] = [
@@ -124,6 +130,10 @@ impl FileGrant {
 
 /// A directory the sandbox may open. One `DirGrant` is one cap-std preopen.
 /// The runtime does not expand directories (ADR-008 A.2).
+///
+/// `DirGrant` is not itself a lattice type. It participates in the
+/// [`crate::CapabilitySet`] lattice via the prefix-containment subset rules
+/// below (ADR-008 A.2); [`crate::ResourceBudget`] stays outside that lattice.
 ///
 /// Sorted and deduplicated by root. Subset is prefix containment: a
 /// `DirGrant` in self is covered by a `DirGrant` in other whose root is an

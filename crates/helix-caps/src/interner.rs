@@ -38,6 +38,10 @@ struct PathEntry {
 /// Snapshot-scoped intern table. helix-policy builds one at load.
 /// `helix-ctl run --caps` may build a throwaway (ADR-009 E.2).
 ///
+/// `Interner` is not a lattice element. It is snapshot infrastructure that
+/// makes `DirGrant` / `FileGrant` prefix checks an id comparison; the
+/// authority lattice lives on [`crate::CapabilitySet`].
+///
 /// Prefix containment for `DirGrant` is precomputed: the table stores each
 /// path's parent chain as ids, so containment is an id comparison, not a
 /// memcmp (ADR-008 A.3).
@@ -50,7 +54,8 @@ struct PathEntry {
 /// ADR-008 A.3 (no `DeserializeSeed` / thread-local / `from_wire` named).
 /// M1 chooses the mechanism: a successful `CapabilitySet` deserialization
 /// owns a throwaway [`Interner`] built from the wire paths so JSON
-/// round-trips resolve without an external snapshot (CAPS-9).
+/// round-trips resolve without an external snapshot (CAPS-9). The invariant
+/// is: construction always goes through `CapabilitySet::new`.
 #[derive(Clone, Debug)]
 pub struct Interner {
     paths: Vec<PathEntry>,
@@ -84,7 +89,7 @@ impl Interner {
     ///
     /// Paths must already be absolute and free of `..` / `.` components;
     /// callers that accept untrusted strings should use
-    /// [`validate_canonical_path`] first. This method does not perform I/O.
+    /// `validate_canonical_path` first. This method does not perform I/O.
     ///
     /// # Panics
     ///
@@ -181,6 +186,25 @@ impl Interner {
             return true;
         }
         self.parent_chain(descendant).contains(&ancestor)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.paths.is_empty() && self.authorities.is_empty()
+    }
+
+    /// True when both tables minted the same ids for the same paths/authorities
+    /// (clones of one snapshot, or independently built in the same intern order).
+    pub(crate) fn same_snapshot(&self, other: &Self) -> bool {
+        if self.paths.len() != other.paths.len()
+            || self.authorities.len() != other.authorities.len()
+        {
+            return false;
+        }
+        self.paths
+            .iter()
+            .zip(&other.paths)
+            .all(|(a, b)| a.path == b.path)
+            && self.authorities == other.authorities
     }
 }
 

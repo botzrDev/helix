@@ -1,4 +1,7 @@
 //! `CapabilitySet` with checked construction and serde `try_from` (ADR-008 A.1).
+//!
+//! Forms the authority lattice under `is_subset_of` (HLX-11). Budget remains
+//! outside the lattice (ADR-008 A.4).
 
 use std::path::PathBuf;
 
@@ -17,6 +20,11 @@ use crate::{
 /// - If `Interface::Filesystem` is clear, `files` and `dirs` are empty.
 /// - If `Interface::HttpOutbound` is clear, `hosts` is empty.
 ///
+/// `CapabilitySet` forms a lattice under `is_subset_of`. The property tests
+/// verify reflexivity, antisymmetry, and transitivity, generating `dirs`
+/// (CAPS-1 through CAPS-6 as extended by ADR-008 A.2). Budget is not in
+/// the lattice.
+///
 /// There is exactly one way to obtain a `CapabilitySet`: `new`. Deserialize
 /// is `#[serde(try_from = "CapabilitySetWire")]`. `CapabilitySetWire` is
 /// private and mirrors the wire encoding (interface names, path strings,
@@ -25,9 +33,6 @@ use crate::{
 /// (CAPS-11). `interfaces` is deserialized from names only; a bit outside
 /// the defined `Interface` variants is unrepresentable. `new` takes
 /// `&[Interface]`, never a raw `u64` (ADR-008 A.1).
-///
-/// Lattice operations (`is_subset_of`, `attenuate`, `meet`) are intentionally
-/// omitted here; they are HLX-11 / M1-02.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "CapabilitySetWire", into = "CapabilitySetWire")]
 pub struct CapabilitySet {
@@ -244,7 +249,7 @@ impl CapabilitySet {
         self.interfaces & i.bit() != 0
     }
 
-    fn invariants_hold(&self) -> bool {
+    pub(crate) fn invariants_hold(&self) -> bool {
         let has_fs = self.interfaces & Interface::Filesystem.bit() != 0;
         let has_http = self.interfaces & Interface::HttpOutbound.bit() != 0;
         self.files.windows(2).all(|w| w[0].path() < w[1].path())

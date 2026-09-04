@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+arc-swap = { workspace = true }
 base64 = { workspace = true }
 helix-caps = { path = "../helix-caps" }
 log = { workspace = true }

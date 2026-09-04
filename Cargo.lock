@@ -269,6 +269,7 @@ version = "0.1.0"
 dependencies = [
  "metrics",
  "minicbor",
+ "serde_json",
  "sha2",
  "thiserror",
  "tokio",
@@ -289,7 +290,9 @@ name = "helix-ctl"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "helix-audit",
  "helix-policy",
+ "serde_json",
 ]
 
 [[package]]

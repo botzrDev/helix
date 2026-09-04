@@ -6,7 +6,7 @@
 //! M1-01 (HLX-10): types, checked construction, serde `try_from`, `Interner`,
 //! `ResourceBudget`. M1-02 (HLX-11): lattice operations `is_subset_of`,
 //! `attenuate`, `meet`, `has`, `EMPTY`. M1-03 (HLX-12): Miri in CI (ST-5) and
-//! docs.rs-quality rustdoc.
+//! docs.rs-quality rustdoc. M1-04 (HLX-13): CAPS-11 through CAPS-15.
 //!
 //! Lattice vs non-lattice: [`CapabilitySet`] (with [`DirGrant`] prefix rules)
 //! forms the authority lattice. [`ResourceBudget`] is a sibling ceiling and

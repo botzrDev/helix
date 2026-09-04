@@ -1,6 +1,6 @@
 //! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
-//! bit-driven capability linking, filesystem grants, and resource limits
-//! (M4-01…M4-04 / HLX-24…HLX-27).
+//! bit-driven capability linking, filesystem grants, resource limits, and
+//! cancellation (M4-01…M4-05 / HLX-24…HLX-28).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -19,6 +19,14 @@
 //! [`bounded::BoundedWriter`] enforces `output_bytes` (S4); [`invoke`] owns the
 //! fresh Store, epoch deadline, and terminal-record drop guard (D3).
 //!
+//! **Cancellation (HLX-28):** [`cancel::spawn_cancellable`] is the sole
+//! `tokio::spawn` site (ST-2 / ADR-003). Every host call clones a request
+//! [`tokio_util::sync::CancellationToken`]; wall-clock cancel yields
+//! [`error::KillCause::WallClock`] (`-32011`); dropping
+//! [`cancel::RequestLifecycle`] aborts children with
+//! [`error::KillCause::ParentDropped`] (`-32014`). Child `JoinSet` scaffolding
+//! awaits `helix:delegate` (HLX-31).
+//!
 //! **Registration linker template (HLX-24):** `InstancePre` values used for
 //! `signature` at register/load are still built with
 //! `define_unknown_imports_as_traps` so registration does not require a
@@ -36,6 +44,7 @@
 
 pub mod artifact;
 pub mod bounded;
+pub mod cancel;
 pub mod config;
 pub mod engine;
 pub mod error;
@@ -54,6 +63,11 @@ pub use artifact::{
     LoadedArtifact,
 };
 pub use bounded::{BoundedWriter, BoundedWriterError};
+pub use cancel::{
+    host_select, record_parent_dropped_kill, record_wall_clock_kill, run_with_wall_clock,
+    spawn_cancellable, stub_blocking_host, ChildJoinSet, RequestLifecycle,
+    METRIC_KILL_PARENT_DROPPED, METRIC_KILL_WALL_CLOCK,
+};
 pub use config::RuntimeConfig;
 pub use engine::build_engine;
 pub use error::{InvokeError, KillCause, RuntimeError, Usage};
@@ -63,9 +77,9 @@ pub use fs::{
 };
 pub use host::WasiHost;
 pub use invoke::{
-    deliver_output, invoke, preempt_deadline_ticks, run_limited, InvokeHost, InvokeSuccess,
-    NopHook, RecordingHook, TerminalGuard, TerminalHook, TerminalKind, TerminalRecord,
-    METRIC_KILL_MEMORY, METRIC_KILL_OUTPUT,
+    deliver_output, invoke, invoke_with_cancel, preempt_deadline_ticks, run_limited, InvokeHost,
+    InvokeSuccess, NopHook, RecordingHook, TerminalGuard, TerminalHook, TerminalKind,
+    TerminalRecord, METRIC_KILL_MEMORY, METRIC_KILL_OUTPUT,
 };
 pub use limits::{HelixLimiter, DEFAULT_TABLE_ELEMENTS};
 pub use link::{link, link_with_names, linked_names, provision_pre};

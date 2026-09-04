@@ -5,11 +5,12 @@
 //! **one event per transition**. Export loss / backpressure never touches the
 //! store; lag is reported as `helix_audit_export_lag_records`.
 //!
-//! ## Task ownership (ST-2 hole)
+//! ## Task ownership (ST-2)
 //!
-//! `helix-runtime::spawn_cancellable` does not exist yet (M4). This exporter is
-//! owned via [`tokio::task::JoinSet`], matching the HLX-18 writer pattern —
-//! never bare `tokio::spawn` (see `clippy.toml` / ADR-003).
+//! `helix-runtime::spawn_cancellable` is the sole `tokio::spawn` site (HLX-28).
+//! This exporter remains owned via [`tokio::task::JoinSet`] (not bare
+//! `tokio::spawn`) — `JoinSet` ownership satisfies ST-2 / ADR-003 without a
+//! runtime→audit dependency edge.
 //!
 //! ## Witness hook (HLX-22 / M3-05)
 //!

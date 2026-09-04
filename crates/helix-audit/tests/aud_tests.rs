@@ -770,3 +770,316 @@ async fn aud4_exporter_pause_store_safe_and_catchup() {
     exporter.shutdown().await.unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// AUD-9: rewrite records 100..200 and rechain; local verify passes;
+/// `verify --witnesses` fails at the first witness after 100; a 412 on a
+/// rewritten sequence surfaces as tampering (immutable witness preserved).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(not(miri))]
+#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
+async fn aud9_rewrite_rechain_witnesses_detect_tampering() {
+    use helix_audit::{
+        encode_frame, verify_dir, verify_dir_with_witnesses, verify_file, AuditWriterRuntime,
+        FileHeader, NoopExportSink, NoopSyncHook, WitnessAuth, WitnessConfig, WitnessHttpClient,
+        WitnessReceiveRuntime, WitnessRuntime, WitnessVerifyError,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let base = tmp_path("aud9");
+    let audit_dir = base.join("audit");
+    let sink_dir = base.join("sink");
+    let token_path = base.join("token");
+    std::fs::create_dir_all(&audit_dir).unwrap();
+    std::fs::create_dir_all(&sink_dir).unwrap();
+    std::fs::write(&token_path, "aud9-secret-token\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&token_path).unwrap().permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&token_path, perms).unwrap();
+    }
+
+    let recv = WitnessReceiveRuntime::start(
+        &sink_dir,
+        "127.0.0.1:0".parse().unwrap(),
+        "aud9-secret-token",
+    )
+    .await
+    .unwrap();
+    let sink_url = recv.base_url();
+
+    let cfg = WitnessConfig {
+        sink_base: sink_url.clone(),
+        auth: WitnessAuth::Bearer {
+            token_file: token_path.clone(),
+        },
+        interval_records: 50,
+        interval_s: 3600, // records-driven for this test
+    };
+    let wit_rt = WitnessRuntime::start(cfg, Arc::new(NoopExportSink)).unwrap();
+    let handle = wit_rt.handle();
+
+    let file_ulid = ulidish(0x99);
+    let log_path = audit_dir.join(helix_audit::log_file_name(&file_ulid));
+    let rt = AuditWriterRuntime::open_genesis_with_witness(
+        &log_path,
+        "gw-aud9",
+        file_ulid,
+        Arc::new(NoopSyncHook),
+        256,
+        handle.clone(),
+        50,
+        3600,
+    )
+    .await
+    .unwrap();
+    let w = rt.writer();
+
+    // Write 250 records so witnesses fire at seq 49, 99, 149, 199, 249.
+    // Use Authorized (no caps_hash) so verify_dir does not require side files.
+    for i in 0..250u64 {
+        w.append_synced(sample_record(Transition::Authorized, 0))
+            .await
+            .unwrap();
+        let _ = i;
+    }
+    drop(w);
+    rt.join().await.unwrap();
+
+    // Wait for witnesses to land.
+    let client = WitnessHttpClient::new(
+        &sink_url,
+        WitnessAuth::Bearer {
+            token_file: token_path.clone(),
+        },
+    )
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut keys = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        keys = client.list_keys("gw-aud9/").await.unwrap_or_default();
+        let seq_keys: Vec<_> = keys
+            .iter()
+            .filter(|k| k.rsplit('/').next().is_some_and(|s| s.len() == 20))
+            .collect();
+        if seq_keys.len() >= 5 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        keys.iter().filter(|k| k.contains('/')).count() >= 5,
+        "expected >=5 witnesses, got {keys:?}"
+    );
+
+    // Local verify passes on pristine chain.
+    verify_dir(&audit_dir).expect("pristine local verify");
+    verify_dir_with_witnesses(&audit_dir, &client, Some("gw-aud9"))
+        .await
+        .expect("pristine witness verify");
+
+    // --- Rewrite records 100..=200 and rechain forward ---
+    let bytes = std::fs::read(&log_path).unwrap();
+    let (header, mut offset) = FileHeader::decode_cbor(&bytes).unwrap();
+    let mut frames = Vec::new();
+    while offset < bytes.len() {
+        let (frame, n) = helix_audit::frame::decode_frame(&bytes[offset..]).unwrap();
+        offset += n;
+        frames.push(frame);
+    }
+    assert_eq!(frames.len(), 250);
+
+    let mut out = header.encode_cbor().unwrap();
+    let mut prev = header.prev_hash;
+    for (idx, frame) in frames.iter().enumerate() {
+        let mut rec = frame.record.clone();
+        if (100..=200).contains(&idx) {
+            // Tamper payload; sequence stays so witness keys still align.
+            rec.reason = format!("tampered-{idx}");
+        }
+        let (frame_bytes, new_hash) = encode_frame(&rec, &prev).unwrap();
+        out.extend_from_slice(&frame_bytes);
+        prev = new_hash;
+    }
+    std::fs::write(&log_path, &out).unwrap();
+
+    // Local verify passes (chain is self-consistent after rechain).
+    let local = verify_file(&out).expect("rechained local verify must pass");
+    assert_eq!(local.frames.len(), 250);
+    verify_dir(&audit_dir).expect("dir verify after rechain");
+
+    // Witness verify fails at first witness after record 100 (seq 149).
+    let err = verify_dir_with_witnesses(&audit_dir, &client, Some("gw-aud9"))
+        .await
+        .expect_err("witness verify must detect tampering");
+    assert!(err.is_tampering(), "expected tampering, got {err}");
+    let msg = err.first_break_message();
+    assert!(
+        msg.contains("149") || msg.contains("sequence=149") || msg.contains("199"),
+        "expected first witness after 100 in message, got {msg}"
+    );
+
+    // 412 on rewritten sequence: attempting to overwrite the immutable witness
+    // fails; the preserved witness is what surfaces tampering (before operators
+    // would compare freshly minted hashes).
+    let wit_key = keys
+        .iter()
+        .find(|k| k.ends_with(&format!("{:020}", 149)))
+        .cloned()
+        .expect("witness key for seq 149");
+    let old_body = client.get_object(&wit_key).await.unwrap();
+    let put_err = client
+        .put_exclusive(&wit_key, b"fake-overwrite")
+        .await
+        .expect_err("overwrite must 412");
+    assert!(
+        matches!(put_err, helix_audit::SinkError::Conflict),
+        "expected Conflict/412, got {put_err}"
+    );
+    let still = client.get_object(&wit_key).await.unwrap();
+    assert_eq!(still, old_body, "412 must leave original witness intact");
+
+    // ConflictTampering path: local head at 149 != witness head.
+    match err {
+        WitnessVerifyError::ConflictTampering { sequence, .. } => {
+            assert!(sequence > 100, "first mismatch must be after record 100");
+        }
+        WitnessVerifyError::Tampering { sequence, .. } => {
+            assert!(sequence > 100);
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+
+    wit_rt.shutdown().await;
+    recv.shutdown().await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// AUD-10: witness-receive under SIGKILL mid-PUT leaves no partial object
+/// visible to GET (write-temp-then-rename).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(not(miri))]
+async fn aud10_witness_receive_sigkill_no_partial() {
+    use helix_audit::{load_token_file, WitnessReceiveRuntime};
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    let base = tmp_path("aud10");
+    let sink_dir = base.join("sink");
+    let token_path = base.join("token");
+    std::fs::create_dir_all(&sink_dir).unwrap();
+    std::fs::write(&token_path, "aud10-token\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&token_path).unwrap().permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&token_path, perms).unwrap();
+    }
+
+    // Child process: open temp file in sink dir, write partial bytes, signal
+    // readiness on stdout, then sleep forever — parent SIGKILLs before rename.
+    // This mirrors witness-receive's write-temp-then-rename contract.
+    let marker = sink_dir.join("gw/fileulid/00000000000000000001.tmp-child");
+    let final_key = sink_dir.join("gw/fileulid/00000000000000000001");
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+
+    let mut child = Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "echo ready; dd if=/dev/zero of='{}' bs=1048576 count=32 status=none & \
+             DPID=$!; sleep 3600",
+            marker.display()
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    // Wait for ready.
+    let mut stdout = child.stdout.take().unwrap();
+    let mut buf = [0u8; 8];
+    let _ = std::io::Read::read(&mut stdout, &mut buf);
+
+    // Ensure temp exists and final does not.
+    let mut waited = 0;
+    while !marker.exists() && waited < 100 {
+        std::thread::sleep(Duration::from_millis(20));
+        waited += 1;
+    }
+    assert!(marker.exists(), "temp object must exist mid-write");
+    assert!(!final_key.exists(), "final key must not exist mid-PUT");
+
+    // SIGKILL the writer process mid-PUT.
+    let _ = Command::new("kill")
+        .args(["-9", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+
+    // Simulate receive server listing/GET: temps are invisible; final absent.
+    let recv = WitnessReceiveRuntime::start(
+        &sink_dir,
+        "127.0.0.1:0".parse().unwrap(),
+        load_token_file(&token_path).unwrap(),
+    )
+    .await
+    .unwrap();
+    let url = recv.base_url();
+
+    let http = reqwest::Client::new();
+    let list = http
+        .get(format!("{url}/"))
+        .header("authorization", "Bearer aud10-token")
+        .send()
+        .await
+        .unwrap();
+    assert!(list.status().is_success());
+    let keys: Vec<String> = list.json().await.unwrap();
+    assert!(
+        keys.is_empty(),
+        "no partial object may be visible to list/GET, got {keys:?}"
+    );
+
+    let get = http
+        .get(format!("{url}/gw/fileulid/00000000000000000001"))
+        .header("authorization", "Bearer aud10-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get.status(), reqwest::StatusCode::NOT_FOUND);
+
+    // Successful PUT via receive uses temp+rename and is visible.
+    let put = http
+        .put(format!("{url}/gw/fileulid/00000000000000000001"))
+        .header("authorization", "Bearer aud10-token")
+        .header("if-none-match", "*")
+        .body(vec![1, 2, 3, 4])
+        .send()
+        .await
+        .unwrap();
+    assert!(put.status().is_success(), "put status {}", put.status());
+    let get2 = http
+        .get(format!("{url}/gw/fileulid/00000000000000000001"))
+        .header("authorization", "Bearer aud10-token")
+        .send()
+        .await
+        .unwrap();
+    assert!(get2.status().is_success());
+    assert_eq!(get2.bytes().await.unwrap().as_ref(), &[1, 2, 3, 4]);
+
+    // Second PUT → 412.
+    let put2 = http
+        .put(format!("{url}/gw/fileulid/00000000000000000001"))
+        .header("authorization", "Bearer aud10-token")
+        .header("if-none-match", "*")
+        .body(vec![9, 9])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put2.status(), reqwest::StatusCode::PRECONDITION_FAILED);
+
+    recv.shutdown().await;
+    let _ = std::fs::remove_dir_all(&base);
+}

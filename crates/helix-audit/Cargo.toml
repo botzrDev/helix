@@ -7,5 +7,16 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[dependencies]
+minicbor = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "fs", "io-util"] }
+metrics = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "fs", "io-util", "time"] }
+metrics = { workspace = true }
+
 [lints]
 workspace = true

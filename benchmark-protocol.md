@@ -36,7 +36,7 @@ Fixtures:
 | BENCH-5 | Same as BENCH-4 with audit sync off | **Gated**: throughput difference between BENCH-4 and BENCH-5 must not exceed **2×** |
 | BENCH-6 | `fs_read.wasm` and `http_get.wasm` at c=8 | informational |
 | BENCH-7 | Memory: RSS after 100 000 invocations at c=64 vs after warmup | ≤ 5 % growth |
-| BENCH-8 | Preempt kill latency: `spin.wasm` with `preempt_ticks = 10` | Killed within 12 ms p99 |
+| BENCH-8 | Preempt kill latency: `spin.wasm` with `preempt_ticks = 10` | Killed within 12 ms p99 (informational until M7-01; RT-5 covers functional preempt) |
 
 Record size: a `Granted` audit record is ~200 bytes (deterministic CBOR). Record that figure beside the `fio` result in `bench-results/hardware.json` so group-commit batch arithmetic is checkable.
 

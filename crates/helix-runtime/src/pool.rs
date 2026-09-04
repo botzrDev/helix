@@ -14,7 +14,8 @@ use crate::{METRIC_INSTANTIATE_SECONDS, METRIC_POOL_IN_USE};
 
 /// Owned `InstancePre<()>` built against the M4-01 linker template.
 ///
-/// Documented hole: imports are trapping stubs until HLX-25 `link(&CapabilitySet)`.
+/// Registration/load path: trapping-import `InstancePre` (HLX-24).
+/// Request-path provision uses [`crate::link::link`] (HLX-25).
 #[derive(Clone)]
 pub struct PooledPre {
     inner: Arc<InstancePre<()>>,

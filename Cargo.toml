@@ -21,6 +21,8 @@ publish = false
 [workspace.dependencies]
 wasmtime = "36.0"
 wasmtime-wasi = "36.0"
+wasmtime-wasi-io = "36.0"
+anyhow = "1"
 wit-bindgen = "0.44"
 tokio = "1"
 axum = "0.8"

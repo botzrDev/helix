@@ -182,6 +182,25 @@ impl Interner {
         }
         self.parent_chain(descendant).contains(&ancestor)
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.paths.is_empty() && self.authorities.is_empty()
+    }
+
+    /// True when both tables minted the same ids for the same paths/authorities
+    /// (clones of one snapshot, or independently built in the same intern order).
+    pub(crate) fn same_snapshot(&self, other: &Self) -> bool {
+        if self.paths.len() != other.paths.len()
+            || self.authorities.len() != other.authorities.len()
+        {
+            return false;
+        }
+        self.paths
+            .iter()
+            .zip(&other.paths)
+            .all(|(a, b)| a.path == b.path)
+            && self.authorities == other.authorities
+    }
 }
 
 /// Reject relative paths and `..` / `.` components (CAPS-8). No I/O.

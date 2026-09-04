@@ -74,6 +74,12 @@ impl MethodMask {
         self.0 & !other.0 == 0
     }
 
+    /// Bitwise intersection (meet) of two masks.
+    #[must_use]
+    pub(crate) fn intersection(self, other: MethodMask) -> MethodMask {
+        Self(self.0 & other.0)
+    }
+
     /// Methods set in this mask, in bit order (for wire encoding).
     pub(crate) fn methods(self) -> Vec<Method> {
         const ALL: [Method; 6] = [

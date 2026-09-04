@@ -244,7 +244,7 @@ impl CapabilitySet {
         self.interfaces & i.bit() != 0
     }
 
-    fn invariants_hold(&self) -> bool {
+    pub(crate) fn invariants_hold(&self) -> bool {
         let has_fs = self.interfaces & Interface::Filesystem.bit() != 0;
         let has_http = self.interfaces & Interface::HttpOutbound.bit() != 0;
         self.files.windows(2).all(|w| w[0].path() < w[1].path())

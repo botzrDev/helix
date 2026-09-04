@@ -59,31 +59,45 @@ impl PartialEq for CapabilitySet {
         {
             return false;
         }
-        for (a, b) in self.files.iter().zip(other.files.iter()) {
-            if a.mode() != b.mode() {
-                return false;
-            }
-            if self.interner.path(a.path()) != other.interner.path(b.path()) {
-                return false;
-            }
-        }
-        for (a, b) in self.dirs.iter().zip(other.dirs.iter()) {
-            if a.mode() != b.mode() {
-                return false;
-            }
-            if self.interner.path(a.root()) != other.interner.path(b.root()) {
-                return false;
-            }
-        }
-        for (a, b) in self.hosts.iter().zip(other.hosts.iter()) {
-            if a.methods() != b.methods() {
-                return false;
-            }
-            if self.interner.authority(a.authority()) != other.interner.authority(b.authority()) {
-                return false;
-            }
-        }
-        true
+        // Grants are sorted by intern id, which is table-local. CAPS-11 round-trip
+        // rebuilds a throwaway Interner from the wire, so compare by path /
+        // authority strings rather than zip order.
+        self.files.iter().all(|f| {
+            other
+                .files
+                .iter()
+                .any(|g| f.mode() == g.mode() && path_eq_ids(self, f.path(), other, g.path()))
+        }) && self.dirs.iter().all(|d| {
+            other
+                .dirs
+                .iter()
+                .any(|g| d.mode() == g.mode() && path_eq_ids(self, d.root(), other, g.root()))
+        }) && self.hosts.iter().all(|h| {
+            other.hosts.iter().any(|g| {
+                h.methods() == g.methods() && auth_eq_ids(self, h.authority(), other, g.authority())
+            })
+        })
+    }
+}
+
+fn path_eq_ids(a: &CapabilitySet, pa: crate::PathId, b: &CapabilitySet, pb: crate::PathId) -> bool {
+    if a.interner.is_empty() || b.interner.is_empty() {
+        pa == pb
+    } else {
+        a.interner.path(pa) == b.interner.path(pb)
+    }
+}
+
+fn auth_eq_ids(
+    a: &CapabilitySet,
+    pa: crate::AuthorityId,
+    b: &CapabilitySet,
+    pb: crate::AuthorityId,
+) -> bool {
+    if a.interner.is_empty() || b.interner.is_empty() {
+        pa == pb
+    } else {
+        a.interner.authority(pa) == b.interner.authority(pb)
     }
 }
 

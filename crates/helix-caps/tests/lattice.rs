@@ -1,10 +1,11 @@
-//! CAPS-1 through CAPS-7 and CAPS-10 (test-plan.md). Generators include `dirs`.
+//! CAPS-1 through CAPS-7, CAPS-10, CAPS-11, and CAPS-14 (test-plan.md).
+//! Generators include `dirs`. CAPS-11 reuses the M1-02 path/host/method pools.
 
 use std::path::Path;
 
 use helix_caps::{
     CapabilitySet, CapsError, DirGrant, FileGrant, FileMode, HostGrant, Interface, Interner,
-    Method, MethodMask,
+    Method, MethodMask, ResourceBudget,
 };
 use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
@@ -184,7 +185,24 @@ fn build(
     canonicalize(&set)
 }
 
-fn set_strategy() -> impl Strategy<Value = CapabilitySet> {
+fn file_mode(rw: bool) -> FileMode {
+    if rw {
+        FileMode::ReadWrite
+    } else {
+        FileMode::Read
+    }
+}
+
+type GrantParts = (
+    u8,
+    Vec<(usize, FileMode)>,
+    Vec<(usize, FileMode)>,
+    Vec<(usize, MethodMask)>,
+);
+
+/// Same component generators as M1-02 `set_strategy`: interface bits, path
+/// indices from `FILE_PATHS` / `DIR_PATHS`, host indices from `HOSTS`.
+fn parts_strategy() -> impl Strategy<Value = GrantParts> {
     (
         0u8..32,
         prop::collection::vec((0usize..FILE_PATHS.len(), prop::bool::ANY), 0..4),
@@ -192,39 +210,22 @@ fn set_strategy() -> impl Strategy<Value = CapabilitySet> {
         prop::collection::vec((0usize..HOSTS.len(), 1u8..=0b0011_1111), 0..3),
     )
         .prop_map(|(bits, files, dirs, hosts)| {
-            let files: Vec<(usize, FileMode)> = files
+            let files = files
                 .into_iter()
-                .map(|(i, rw)| {
-                    (
-                        i,
-                        if rw {
-                            FileMode::ReadWrite
-                        } else {
-                            FileMode::Read
-                        },
-                    )
-                })
+                .map(|(i, rw)| (i, file_mode(rw)))
                 .collect();
-            let dirs: Vec<(usize, FileMode)> = dirs
-                .into_iter()
-                .map(|(i, rw)| {
-                    (
-                        i,
-                        if rw {
-                            FileMode::ReadWrite
-                        } else {
-                            FileMode::Read
-                        },
-                    )
-                })
-                .collect();
-            let hosts: Vec<(usize, MethodMask)> = hosts
+            let dirs = dirs.into_iter().map(|(i, rw)| (i, file_mode(rw))).collect();
+            let hosts = hosts
                 .into_iter()
                 .map(|(i, b)| (i, mask_from_bits(b)))
                 .filter(|(_, m)| m.bits() != 0)
                 .collect();
-            build(bits, &files, &dirs, &hosts)
+            (bits, files, dirs, hosts)
         })
+}
+
+fn set_strategy() -> impl Strategy<Value = CapabilitySet> {
+    parts_strategy().prop_map(|(bits, files, dirs, hosts)| build(bits, &files, &dirs, &hosts))
 }
 
 // CAPS-1
@@ -539,4 +540,153 @@ fn host_methods_subset_and_meet() {
         .methods()
         .is_subset_of(MethodMask::new(&[Method::Get])));
     assert!(MethodMask::new(&[Method::Get]).is_subset_of(m.hosts()[0].methods()));
+}
+
+fn methods_of(mask: MethodMask) -> Vec<Method> {
+    ALL_METHODS
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, m)| ((mask.bits() & (1 << i)) != 0).then_some(m))
+        .collect()
+}
+
+fn try_new_from_parts(
+    bits: u8,
+    files: &[(usize, FileMode)],
+    dirs: &[(usize, FileMode)],
+    hosts: &[(usize, MethodMask)],
+) -> Result<CapabilitySet, CapsError> {
+    // Intern in the same order as `TryFrom<CapabilitySetWire>` (files, dirs,
+    // hosts) so PathId sort order matches Deserialize. `pool()` would mint a
+    // larger table and make `PartialEq` fail on equal path strings.
+    let mut intern = Interner::new();
+    let interfaces = interfaces_from_bits(bits);
+    let file_grants: Vec<FileGrant> = files
+        .iter()
+        .map(|(i, m)| FileGrant::new(intern.intern_path(Path::new(FILE_PATHS[*i])), *m))
+        .collect();
+    let dir_grants: Vec<DirGrant> = dirs
+        .iter()
+        .map(|(i, m)| DirGrant::new(intern.intern_path(Path::new(DIR_PATHS[*i])), *m))
+        .collect();
+    let host_grants: Vec<HostGrant> = hosts
+        .iter()
+        .map(|(i, mask)| HostGrant::new(intern.intern_authority(HOSTS[*i]), *mask))
+        .collect();
+    CapabilitySet::new(&interfaces, file_grants, dir_grants, host_grants)
+        .map(|set| set.with_interner(intern))
+}
+
+fn wire_from_parts(
+    bits: u8,
+    files: &[(usize, FileMode)],
+    dirs: &[(usize, FileMode)],
+    hosts: &[(usize, MethodMask)],
+) -> serde_json::Value {
+    let file_vals: Vec<serde_json::Value> = files
+        .iter()
+        .map(|(i, m)| serde_json::json!({ "path": FILE_PATHS[*i], "mode": m }))
+        .collect();
+    let dir_vals: Vec<serde_json::Value> = dirs
+        .iter()
+        .map(|(i, m)| serde_json::json!({ "path": DIR_PATHS[*i], "mode": m }))
+        .collect();
+    let host_vals: Vec<serde_json::Value> = hosts
+        .iter()
+        .map(
+            |(i, mask)| serde_json::json!({ "authority": HOSTS[*i], "methods": methods_of(*mask) }),
+        )
+        .collect();
+    serde_json::json!({
+        "interfaces": interfaces_from_bits(bits),
+        "files": file_vals,
+        "dirs": dir_vals,
+        "hosts": host_vals,
+    })
+}
+
+fn round_trip(set: &CapabilitySet) -> Result<CapabilitySet, serde_json::Error> {
+    let json = serde_json::to_string(set)?;
+    serde_json::from_str(&json)
+}
+
+// CAPS-11: `new` and `Deserialize` agree on the M1-02 generator. Accepted
+// values round-trip; rejected values are rejected on the wire too.
+proptest! {
+    #![proptest_config(prop_config())]
+    #[test]
+    fn caps11_new_and_deserialize_parity(parts in parts_strategy(), accepted in set_strategy()) {
+        let json = round_trip(&accepted);
+        prop_assert!(json.is_ok(), "accepted set failed to round-trip: {json:?}");
+        prop_assert_eq!(json.unwrap(), accepted);
+
+        let (bits, files, dirs, hosts) = parts;
+        let wire = wire_from_parts(bits, &files, &dirs, &hosts);
+        if let Ok(set) = try_new_from_parts(bits, &files, &dirs, &hosts) {
+            let de = serde_json::from_value::<CapabilitySet>(wire);
+            prop_assert!(de.is_ok(), "new accepted but Deserialize rejected: {de:?}");
+            prop_assert_eq!(de.unwrap(), set.clone());
+            let rt = round_trip(&set);
+            prop_assert!(rt.is_ok(), "new-accepted set failed to round-trip: {rt:?}");
+            prop_assert_eq!(rt.unwrap(), set);
+        } else {
+            let de = serde_json::from_value::<CapabilitySet>(wire);
+            prop_assert!(
+                de.is_err(),
+                "new rejected but Deserialize accepted: {de:?}"
+            );
+        }
+    }
+}
+
+fn budget_strategy() -> impl Strategy<Value = ResourceBudget> {
+    (
+        0u32..64,
+        0u32..64,
+        0u64..64,
+        0u32..64,
+        0u32..8,
+        0u32..16,
+        0u32..64,
+    )
+        .prop_map(|(p, w, mem, o, d, c, i)| ResourceBudget::new(p, w, mem, o, d, c, i))
+}
+
+// CAPS-14: `min` is the componentwise glb; `is_within` is reflexive and transitive.
+proptest! {
+    #![proptest_config(prop_config())]
+    #[test]
+    fn caps14_budget_min_glb_is_within_laws(
+        a in budget_strategy(),
+        b in budget_strategy(),
+        c in budget_strategy(),
+    ) {
+        prop_assert!(a.is_within(&a));
+
+        if a.is_within(&b) && b.is_within(&c) {
+            prop_assert!(a.is_within(&c));
+        }
+
+        let m = a.min(&b);
+        prop_assert!(m.is_within(&a));
+        prop_assert!(m.is_within(&b));
+        prop_assert_eq!(m, b.min(&a));
+        prop_assert_eq!(m.preempt_ticks(), a.preempt_ticks().min(b.preempt_ticks()));
+        prop_assert_eq!(m.wall_clock_ms(), a.wall_clock_ms().min(b.wall_clock_ms()));
+        prop_assert_eq!(m.memory_bytes(), a.memory_bytes().min(b.memory_bytes()));
+        prop_assert_eq!(m.output_bytes(), a.output_bytes().min(b.output_bytes()));
+        prop_assert_eq!(
+            m.max_delegation_depth(),
+            a.max_delegation_depth().min(b.max_delegation_depth())
+        );
+        prop_assert_eq!(m.max_children(), a.max_children().min(b.max_children()));
+        prop_assert_eq!(
+            m.max_concurrent_instances(),
+            a.max_concurrent_instances()
+                .min(b.max_concurrent_instances())
+        );
+        if c.is_within(&a) && c.is_within(&b) {
+            prop_assert!(c.is_within(&m));
+        }
+    }
 }

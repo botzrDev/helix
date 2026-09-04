@@ -146,6 +146,15 @@ fn run_caps(dir: &Path, hash: &str) -> i32 {
             return 1;
         }
     };
+    let actual = helix_audit::sha256_32(&bytes);
+    if actual != digest {
+        eprintln!(
+            "caps: content hash mismatch: expected {}, file hashes to {}",
+            hex_encode(&digest),
+            hex_encode(&actual)
+        );
+        return 1;
+    }
     match cbor_to_json(&bytes) {
         Ok(v) => match serde_json::to_string_pretty(&v) {
             Ok(s) => {

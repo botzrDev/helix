@@ -5,12 +5,14 @@
 //! `interfaces/audit-record.md`. Rotation with header `prev_hash` carry-forward
 //! (M3-02 / HLX-19). `OTel` tail exporter (M3-03 / HLX-20, ADR-005).
 //!
-//! Caps side-file **writer/store** is M3-04 / HLX-21. This crate verifies that
-//! referenced `caps/<hex>.cbor` files exist; fixtures may stub them.
+//! Caps side-file store (M3-04 / HLX-21): content-addressed
+//! `caps/<hex>.cbor` via [`caps::CapsStore`]. Verify checks presence and that
+//! `sha256(side file) == caps_hash`.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
+pub mod caps;
 pub mod export;
 pub mod frame;
 pub mod header;
@@ -23,6 +25,10 @@ pub mod tags;
 pub mod verify;
 pub mod writer;
 
+pub use caps::{
+    capability_set_to_json, decode_capability_set, encode_capability_set, sha256_32, CapsStore,
+    CapsStoreError,
+};
 pub use export::{
     AuditExporterRuntime, ExportError, ExportMetrics, ExportSink, ExportedEvent,
     ExportedInvocation, OtelExportSink, RecordingSink, WitnessAttrs, INVOCATION_SPAN_NAME,

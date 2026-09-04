@@ -2,7 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use helix_audit::{AuditRecord, ResourceUsage, Transition, REASON_MAX_BYTES};
+use helix_audit::{
+    encode_capability_set, sha256_32, AuditRecord, CapsStore, ResourceUsage, Transition,
+    REASON_MAX_BYTES,
+};
+use helix_caps::CapabilitySet;
 
 #[cfg(not(miri))]
 use helix_audit::{verify_file, AuditWriterRuntime, SequenceStampHook, GENESIS_PREV_HASH};
@@ -37,6 +41,11 @@ fn digest(n: u8) -> [u8; 32] {
     a
 }
 
+fn empty_caps_hash() -> [u8; 32] {
+    let bytes = encode_capability_set(&CapabilitySet::EMPTY).expect("EMPTY encodes");
+    sha256_32(&bytes)
+}
+
 fn sample_record(transition: Transition, seq: u64) -> AuditRecord {
     AuditRecord::new(
         ulidish(1),
@@ -46,7 +55,7 @@ fn sample_record(transition: Transition, seq: u64) -> AuditRecord {
         transition,
         "ok",
         if matches!(transition, Transition::Granted) {
-            Some(digest(9))
+            Some(empty_caps_hash())
         } else {
             None
         },
@@ -113,6 +122,128 @@ fn aud5_deterministic_cbor_round_trip() {
     let bytes = rec.encode_cbor().unwrap();
     let decoded = AuditRecord::decode_cbor(&bytes).unwrap();
     assert_eq!(decoded.encode_cbor().unwrap(), bytes);
+}
+
+/// AUD-5 (side-file half): equal `CapabilitySet`s → identical CBOR bytes and hash;
+/// encode→decode→re-encode is byte-identical; `CapsStore` write-once.
+#[test]
+#[cfg(not(miri))]
+fn aud5_caps_side_file_hash_and_store() {
+    use helix_caps::{
+        DirGrant, FileGrant, FileMode, HostGrant, Interface, Interner, Method, MethodMask,
+    };
+    use std::path::Path;
+
+    let mut interner_a = Interner::new();
+    let pa = interner_a.intern_path(Path::new("/data/x"));
+    let da = interner_a.intern_path(Path::new("/data"));
+    let aa = interner_a.intern_authority("example.com:443");
+    let set_a = CapabilitySet::new(
+        &[Interface::Filesystem, Interface::HttpOutbound],
+        vec![FileGrant::new(pa, FileMode::Read)],
+        vec![DirGrant::new(da, FileMode::ReadWrite)],
+        vec![HostGrant::new(aa, MethodMask::new(&[Method::Get]))],
+    )
+    .unwrap()
+    .with_interner(interner_a);
+
+    let mut interner_b = Interner::new();
+    let _ = interner_b.intern_path(Path::new("/noise"));
+    let ab = interner_b.intern_authority("example.com:443");
+    let db = interner_b.intern_path(Path::new("/data"));
+    let pb = interner_b.intern_path(Path::new("/data/x"));
+    let set_b = CapabilitySet::new(
+        &[Interface::HttpOutbound, Interface::Filesystem],
+        vec![FileGrant::new(pb, FileMode::Read)],
+        vec![DirGrant::new(db, FileMode::ReadWrite)],
+        vec![HostGrant::new(ab, MethodMask::new(&[Method::Get]))],
+    )
+    .unwrap()
+    .with_interner(interner_b);
+
+    assert_eq!(set_a, set_b);
+    let bytes_a = encode_capability_set(&set_a).unwrap();
+    let bytes_b = encode_capability_set(&set_b).unwrap();
+    assert_eq!(bytes_a, bytes_b, "equal sets must share side-file bytes");
+    assert_eq!(sha256_32(&bytes_a), sha256_32(&bytes_b));
+
+    let decoded = helix_audit::decode_capability_set(&bytes_a).unwrap();
+    assert_eq!(decoded, set_a);
+    assert_eq!(encode_capability_set(&decoded).unwrap(), bytes_a);
+
+    let empty_bytes = encode_capability_set(&CapabilitySet::EMPTY).unwrap();
+    assert_ne!(empty_bytes, vec![0xa0]);
+
+    let dir = tmp_path("aud5-caps");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut store = CapsStore::open(&dir).unwrap();
+    let h1 = store.ensure(&set_a).unwrap();
+    let h2 = store.ensure(&set_b).unwrap();
+    assert_eq!(h1, h2);
+    assert!(store.seen_in_process(&h1));
+    let h3 = store.ensure(&set_a).unwrap();
+    assert_eq!(h3, h1);
+    let path = store.path_for(&h1);
+    assert!(path.is_file());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes_a);
+
+    let (req, avail) = store.ensure_pair(&set_a, &CapabilitySet::EMPTY).unwrap();
+    assert_eq!(req, h1);
+    assert_ne!(req, avail);
+    assert!(store.path_for(&avail).is_file());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Missing caps side file / content hash mismatch → `verify_dir` failure.
+#[tokio::test]
+#[cfg(not(miri))]
+async fn aud5_missing_or_mismatched_caps_fails_verify() {
+    use helix_audit::{verify_dir, AuditWriterRuntime, VerifyError};
+
+    let dir = tmp_path("aud5-missing-caps");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rt = AuditWriterRuntime::open_dir_with(
+        &dir,
+        "gw-caps",
+        1_000_000,
+        std::sync::Arc::new(helix_audit::NoopSyncHook),
+        64,
+        helix_audit::default_ulid_source(),
+    )
+    .await
+    .unwrap();
+    let w = rt.writer();
+    w.append_synced(sample_record(Transition::Granted, 0))
+        .await
+        .unwrap();
+    drop(w);
+    rt.join().await.unwrap();
+
+    let err = verify_dir(&dir).expect_err("missing caps must fail");
+    assert!(
+        matches!(err, VerifyError::MissingCaps { .. }),
+        "got {err:?}"
+    );
+
+    // Write wrong content (empty map stub) under the expected hash path.
+    let hash = empty_caps_hash();
+    let caps_path = dir.join(format!("caps/{}.cbor", helix_audit::hex_encode(&hash)));
+    std::fs::create_dir_all(caps_path.parent().unwrap()).unwrap();
+    std::fs::write(&caps_path, [0xa0u8]).unwrap();
+    let err = verify_dir(&dir).expect_err("hash mismatch must fail");
+    assert!(
+        matches!(err, VerifyError::CapsHashMismatch { .. }),
+        "got {err:?}"
+    );
+
+    // Replace stub with real encoding; verify succeeds.
+    std::fs::remove_file(&caps_path).unwrap();
+    let mut store = CapsStore::open(&dir).unwrap();
+    let _ = store.ensure(&CapabilitySet::EMPTY).unwrap();
+    verify_dir(&dir).expect("real EMPTY side file must verify");
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// AUD-1: clean chain verifies; single byte flip fails at exact index.
@@ -288,7 +419,7 @@ async fn aud8_group_commit_and_sync_stamp() {
 #[tokio::test]
 #[cfg(not(miri))]
 async fn aud3_rotation_carry_forward_and_boundary_break() {
-    use helix_audit::{hex_encode, verify_dir, AuditWriterRuntime, VerifyError};
+    use helix_audit::{verify_dir, AuditWriterRuntime, VerifyError};
 
     let dir = tmp_path("aud3-dir");
     std::fs::create_dir_all(&dir).unwrap();
@@ -346,23 +477,9 @@ async fn aud3_rotation_carry_forward_and_boundary_break() {
         logs.len()
     );
 
-    // Stub caps side files for any referenced hashes (HLX-21 store not yet).
-    let caps_dir = dir.join("caps");
-    std::fs::create_dir_all(&caps_dir).unwrap();
-    for path in &logs {
-        let bytes = std::fs::read(path).unwrap();
-        let report = helix_audit::verify_file(&bytes).unwrap();
-        for frame in &report.frames {
-            if let Some(h) = frame.record.caps_hash {
-                let stub = caps_dir.join(format!("{}.cbor", hex_encode(&h)));
-                if !stub.exists() {
-                    // Minimal CBOR map {} as fixture (not a real CapabilitySet).
-                    // Full caps store writer is HLX-21.
-                    std::fs::write(&stub, [0xa0u8]).unwrap();
-                }
-            }
-        }
-    }
+    // Write real CapabilitySet side files for referenced hashes (HLX-21).
+    let mut store = CapsStore::open(&dir).unwrap();
+    let _ = store.ensure(&CapabilitySet::EMPTY).unwrap();
 
     let report = verify_dir(&dir).expect("two-file sequence must verify");
     assert!(report.files.len() >= 2);
@@ -485,7 +602,7 @@ async fn aud4_exporter_pause_store_safe_and_catchup() {
             digest(3),
             Transition::Granted,
             "ok",
-            Some(digest(9)),
+            Some(empty_caps_hash()),
             Some(ResourceUsage::new(1, 2, 3, 4)),
             None,
             1_700_000_000_000_000_000 + n_synced,
@@ -602,7 +719,7 @@ async fn aud4_exporter_pause_store_safe_and_catchup() {
             digest(3),
             Transition::Granted,
             "ok",
-            Some(digest(9)),
+            Some(empty_caps_hash()),
             Some(ResourceUsage::new(1, 2, 3, 4)),
             None,
             2_000_000_000_000_000_000 + i,

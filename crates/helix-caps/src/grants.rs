@@ -81,7 +81,8 @@ impl MethodMask {
     }
 
     /// Methods set in this mask, in bit order (for wire encoding).
-    pub(crate) fn methods(self) -> Vec<Method> {
+    #[must_use]
+    pub fn methods(self) -> Vec<Method> {
         const ALL: [Method; 6] = [
             Method::Get,
             Method::Head,

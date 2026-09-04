@@ -1,5 +1,6 @@
 //! Hash-chain verification (AUD-1, AUD-3).
 
+use crate::caps::sha256_32;
 use crate::frame::{decode_frame, Frame, FrameError, HASH_LEN};
 use crate::header::{FileHeader, HeaderError};
 use crate::naming::{caps_rel_path, hex_encode, parse_log_file_name};
@@ -70,6 +71,16 @@ pub enum VerifyError {
         index: usize,
         expected_path: PathBuf,
     },
+    #[error(
+        "caps side file hash mismatch for {caps_hash} (referenced by {log_file} record {index}):          file {path} content hashes to {actual}"
+    )]
+    CapsHashMismatch {
+        caps_hash: String,
+        log_file: PathBuf,
+        index: usize,
+        path: PathBuf,
+        actual: String,
+    },
 }
 
 impl VerifyError {
@@ -79,7 +90,8 @@ impl VerifyError {
         match self {
             Self::FrameAt { index, .. }
             | Self::ChainBreak { index, .. }
-            | Self::MissingCaps { index, .. } => Some(*index),
+            | Self::MissingCaps { index, .. }
+            | Self::CapsHashMismatch { index, .. } => Some(*index),
             _ => None,
         }
     }
@@ -136,7 +148,8 @@ pub fn verify_file(file_bytes: &[u8]) -> Result<VerifyReport, VerifyError> {
 
 /// Walk `dir` for `helix-*.log` in ULID order; verify each chain and the
 /// carry-forward `prev_hash` across file boundaries. Also checks that every
-/// referenced `caps_hash` has a side file under `dir/caps/<hex>.cbor`.
+/// referenced `caps_hash` has a side file under `dir/caps/<hex>.cbor`
+/// whose contents hash to that digest.
 pub fn verify_dir(dir: &Path) -> Result<DirVerifyReport, VerifyError> {
     let mut entries = list_log_files(dir)?;
     if entries.is_empty() {
@@ -173,6 +186,17 @@ pub fn verify_dir(dir: &Path) -> Result<DirVerifyReport, VerifyError> {
                         log_file: path.clone(),
                         index,
                         expected_path: caps_path,
+                    });
+                }
+                let bytes = fs::read(&caps_path)?;
+                let actual = sha256_32(&bytes);
+                if actual != hash {
+                    return Err(VerifyError::CapsHashMismatch {
+                        caps_hash: hex_encode(&hash),
+                        log_file: path.clone(),
+                        index,
+                        path: caps_path,
+                        actual: hex_encode(&actual),
                     });
                 }
             }

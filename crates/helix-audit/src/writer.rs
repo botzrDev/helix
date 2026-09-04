@@ -6,10 +6,12 @@ use crate::hook::{NoopSyncHook, SyncHook};
 use crate::naming::log_file_name;
 use crate::record::AuditRecord;
 use crate::tags::GENESIS_PREV_HASH;
+use crate::witness::Witness;
+use crate::witness_sink::WitnessHandle;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
@@ -121,8 +123,14 @@ impl AuditWriterRuntime {
                 bytes_written: header_len,
                 prev_hash,
                 gateway_id,
+                file_ulid,
                 rotate_bytes: u64::MAX,
                 ulid_source: Box::new(|| [0u8; 16]),
+                witness: None,
+                witness_interval_records: u64::MAX,
+                witness_interval: Duration::from_secs(u64::MAX / 4),
+                records_since_witness: 0,
+                last_witness_at: Instant::now(),
             },
             rx,
             hook,
@@ -216,14 +224,124 @@ impl AuditWriterRuntime {
                 bytes_written: header_len,
                 prev_hash: GENESIS_PREV_HASH,
                 gateway_id,
+                file_ulid,
                 rotate_bytes,
                 ulid_source,
+                witness: None,
+                witness_interval_records: u64::MAX,
+                witness_interval: Duration::from_secs(u64::MAX / 4),
+                records_since_witness: 0,
+                last_witness_at: Instant::now(),
             },
             rx,
             hook,
             stamp_view_task,
         ));
 
+        Ok(Self {
+            writer: AuditWriter { tx },
+            join,
+        })
+    }
+
+    /// Directory writer with witness emission (HLX-22).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_dir_with_witness(
+        dir: impl Into<PathBuf>,
+        gateway_id: impl Into<String>,
+        rotate_bytes: u64,
+        hook: Arc<dyn SyncHook>,
+        channel_cap: usize,
+        mut ulid_source: UlidSource,
+        witness: WitnessHandle,
+        witness_interval_records: u64,
+        witness_interval_s: u64,
+    ) -> Result<Self, WriterError> {
+        let dir = dir.into();
+        let gateway_id = gateway_id.into();
+        if rotate_bytes == 0 {
+            return Err(WriterError::InvalidRotateBytes);
+        }
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(WriterError::Io)?;
+
+        let file_ulid = ulid_source();
+        let path = dir.join(log_file_name(&file_ulid));
+        let (file, header_len) =
+            create_log_file(&path, &gateway_id, file_ulid, GENESIS_PREV_HASH).await?;
+
+        let (tx, rx) = mpsc::channel(channel_cap);
+        let stamp_view = Arc::new(AtomicU64::new(0));
+        let stamp_view_task = Arc::clone(&stamp_view);
+        let mut join = JoinSet::new();
+        join.spawn(writer_loop(
+            WriterLoopConfig {
+                mode: WriterMode::Directory { dir },
+                file,
+                bytes_written: header_len,
+                prev_hash: GENESIS_PREV_HASH,
+                gateway_id,
+                file_ulid,
+                rotate_bytes,
+                ulid_source,
+                witness: Some(witness),
+                witness_interval_records: witness_interval_records.max(1),
+                witness_interval: Duration::from_secs(witness_interval_s.max(1)),
+                records_since_witness: 0,
+                last_witness_at: Instant::now(),
+            },
+            rx,
+            hook,
+            stamp_view_task,
+        ));
+
+        Ok(Self {
+            writer: AuditWriter { tx },
+            join,
+        })
+    }
+
+    /// Single-file writer with witness emission (tests / AUD-9).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_genesis_with_witness(
+        path: impl Into<PathBuf>,
+        gateway_id: impl Into<String>,
+        file_ulid: [u8; 16],
+        hook: Arc<dyn SyncHook>,
+        channel_cap: usize,
+        witness: WitnessHandle,
+        witness_interval_records: u64,
+        witness_interval_s: u64,
+    ) -> Result<Self, WriterError> {
+        let path = path.into();
+        let gateway_id = gateway_id.into();
+        let (file, header_len) =
+            create_log_file(&path, &gateway_id, file_ulid, GENESIS_PREV_HASH).await?;
+        let (tx, rx) = mpsc::channel(channel_cap);
+        let stamp_view = Arc::new(AtomicU64::new(0));
+        let stamp_view_task = Arc::clone(&stamp_view);
+        let mut join = JoinSet::new();
+        join.spawn(writer_loop(
+            WriterLoopConfig {
+                mode: WriterMode::SingleFile,
+                file,
+                bytes_written: header_len,
+                prev_hash: GENESIS_PREV_HASH,
+                gateway_id,
+                file_ulid,
+                rotate_bytes: u64::MAX,
+                ulid_source: Box::new(|| [0u8; 16]),
+                witness: Some(witness),
+                witness_interval_records: witness_interval_records.max(1),
+                witness_interval: Duration::from_secs(witness_interval_s.max(1)),
+                records_since_witness: 0,
+                last_witness_at: Instant::now(),
+            },
+            rx,
+            hook,
+            stamp_view_task,
+        ));
         Ok(Self {
             writer: AuditWriter { tx },
             join,
@@ -302,8 +420,14 @@ struct WriterLoopConfig {
     bytes_written: u64,
     prev_hash: [u8; HASH_LEN],
     gateway_id: String,
+    file_ulid: [u8; 16],
     rotate_bytes: u64,
     ulid_source: UlidSource,
+    witness: Option<WitnessHandle>,
+    witness_interval_records: u64,
+    witness_interval: Duration,
+    records_since_witness: u64,
+    last_witness_at: Instant,
 }
 
 async fn create_log_file(
@@ -385,12 +509,39 @@ async fn writer_loop(
             }));
         }
 
+        cfg.records_since_witness = cfg.records_since_witness.saturating_add(batch_len as u64);
+        maybe_emit_witness(&mut cfg, head_sequence);
+
         // Rotation is ordered with the batch stream: only after a synced batch.
         if matches!(cfg.mode, WriterMode::Directory { .. }) && cfg.bytes_written >= cfg.rotate_bytes
         {
             rotate_file(&mut cfg, &mut next_sequence).await?;
         }
     }
+}
+
+fn maybe_emit_witness(cfg: &mut WriterLoopConfig, head_sequence: u64) {
+    let Some(handle) = cfg.witness.as_ref() else {
+        return;
+    };
+    let by_records = cfg.records_since_witness >= cfg.witness_interval_records;
+    let by_time = cfg.last_witness_at.elapsed() >= cfg.witness_interval;
+    if !(by_records || by_time) {
+        return;
+    }
+    let wall_time_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+    let w = Witness::new(
+        cfg.gateway_id.clone(),
+        cfg.file_ulid,
+        head_sequence,
+        cfg.prev_hash,
+        wall_time_ns,
+    );
+    handle.submit_witness(w);
+    cfg.records_since_witness = 0;
+    cfg.last_witness_at = Instant::now();
 }
 
 async fn rotate_file(
@@ -407,8 +558,11 @@ async fn rotate_file(
     // Drop old file by replacement; OS closes on drop.
     cfg.file = file;
     cfg.bytes_written = header_len;
+    cfg.file_ulid = file_ulid;
     // Sequence is per-file (witness key is file_ulid/sequence).
     *next_sequence = 0;
+    cfg.records_since_witness = 0;
+    cfg.last_witness_at = Instant::now();
     let _ = carry;
     Ok(())
 }

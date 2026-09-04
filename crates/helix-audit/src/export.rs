@@ -149,6 +149,14 @@ impl RecordingSink {
         self.inner.invocations.read().await.len()
     }
 
+    pub async fn witnesses(&self) -> Vec<WitnessAttrs> {
+        self.inner.witnesses.read().await.clone()
+    }
+
+    pub async fn witness_count(&self) -> usize {
+        self.inner.witnesses.read().await.len()
+    }
+
     pub async fn wait_until_invocations(&self, n: usize, timeout: Duration) -> bool {
         let start = tokio::time::Instant::now();
         loop {

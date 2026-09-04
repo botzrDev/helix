@@ -56,12 +56,20 @@ pub fn transition_name(t: Transition) -> &'static str {
     }
 }
 
-/// Decode arbitrary deterministic CBOR into JSON (caps side files / stubs).
+/// Decode caps side-file CBOR into JSON.
 ///
-/// HOLE: full CapabilitySet→JSON schema is HLX-21 (caps store). Until then we
-/// walk the CBOR data model into JSON so `helix-ctl audit caps` works on any
-/// CBOR map/array written as a fixture.
+/// Prefers the real [`CapabilitySet`] schema via [`crate::caps::decode_capability_set`]
+/// plus [`crate::caps::capability_set_to_json`]. Falls back to a generic CBOR walk
+/// when the bytes are not a valid `CapabilitySet` encoding (legacy fixtures).
 pub fn cbor_to_json(bytes: &[u8]) -> Result<JsonValue, JsonOutError> {
+    if let Ok(set) = crate::caps::decode_capability_set(bytes) {
+        return Ok(crate::caps::capability_set_to_json(&set));
+    }
+    cbor_to_json_generic(bytes)
+}
+
+/// Generic CBOR to JSON walk (fallback / non-`CapabilitySet` CBOR).
+pub fn cbor_to_json_generic(bytes: &[u8]) -> Result<JsonValue, JsonOutError> {
     let mut d = Decoder::new(bytes);
     let v = decode_value(&mut d)?;
     if d.position() != bytes.len() {

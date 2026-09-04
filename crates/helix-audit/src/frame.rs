@@ -74,7 +74,7 @@ pub fn decode_frame(buf: &[u8]) -> Result<(Frame, usize), FrameError> {
     ))
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum FrameError {
     #[error(transparent)]
     Record(#[from] RecordError),

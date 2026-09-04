@@ -105,7 +105,7 @@ fn enc(e: &minicbor::encode::Error<core::convert::Infallible>) -> HeaderError {
     HeaderError::Encode(e.to_string())
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum HeaderError {
     #[error("cbor decode: {0}")]
     Decode(String),

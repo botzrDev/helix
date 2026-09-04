@@ -10,12 +10,17 @@
 //! `sha256(side file) == caps_hash`.
 //!
 //! Witness emission + S3-style sink (M3-05 / HLX-22, ADR-008 D.4 / ADR-009 D.2).
+//!
+//! Fail-closed writer errors + health (M3-06 / HLX-23, ADR-008 D.3): typed
+//! [`AuditError`], consecutive-error fatality, `ok|degraded|failed` health.
+//! Gateway `-32030` wiring is M5-05 / HLX-36.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod caps;
 pub mod export;
+pub mod fail_closed;
 pub mod frame;
 pub mod header;
 pub mod hook;
@@ -40,6 +45,10 @@ pub use export::{
     ExportedInvocation, OtelExportSink, RecordingSink, WitnessAttrs, INVOCATION_SPAN_NAME,
     WITNESS_SPAN_NAME,
 };
+pub use fail_closed::{
+    AuditHealth, FailClosedConfig, FatalHook, FaultSite, InjectedIoFault, IoFault, NoopIoFault,
+    ProcessExitFatal, RecordingFatal,
+};
 pub use frame::{encode_frame, hash_frame_bytes, Frame, FrameError, HASH_LEN};
 pub use header::{FileHeader, HeaderError};
 pub use hook::{NoopSyncHook, SequenceStampHook, SyncHook};
@@ -62,5 +71,6 @@ pub use witness_sink::{
 };
 pub use witness_verify::{verify_dir_with_witnesses, WitnessVerifyError, WitnessVerifyReport};
 pub use writer::{
-    default_ulid_source, AuditWriter, AuditWriterRuntime, UlidSource, WriteReceipt, WriterError,
+    default_ulid_source, AuditError, AuditWriter, AuditWriterRuntime, UlidSource, WriteReceipt,
+    WriterError,
 };

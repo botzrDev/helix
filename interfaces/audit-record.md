@@ -94,6 +94,15 @@ A response is sent only after a sync that covers its Granted record, and a termi
 
 Fail-closed behaviour is `state-machine.md` rows that exit `-32030`.
 
+### Sync API contract (HLX-23 / audit crate)
+
+`AuditWriter::sync(record) -> Result<(), AuditError>` is awaitable. Callers **must** await a successful sync before component instantiation and before any terminal response. On `Err`:
+
+- Authorized / audit write fails → do not instantiate (gateway returns `-32030` once wired in M5-05 / HLX-36).
+- Terminal record sync fails → discard tool output (caller's duty); still `-32030`.
+
+Typed variants include `NoSpace` (ENOSPC), `InputOutput` (EIO), `RotationOpen`, and `ChannelClosed`. Waiters receive the error (not a timeout). After `audit.max_consecutive_errors` (default 3) consecutive writer failures the process signals fatal (`FatalHook`; production exits). Health `ok | degraded | failed` is exposed for `helix.health` `audit` when `gateway.health_detail = full`. `AuditError::GATEWAY_CODE` is `-32030` for the gateway map.
+
 ## Witness objects
 
 Not part of the log frame. Specified in ADR-009 D.2 (M3-05 / HLX-22): HTTP PUT of a deterministic-CBOR object `{ version, gateway_id, file_ulid, sequence, head_hash, wall_time_ns }` to `<witness_sink>/<gateway_id>/<file_ulid>/<sequence:020>` with `If-None-Match: *`. Witness delivery never blocks the writer and never fails a request.

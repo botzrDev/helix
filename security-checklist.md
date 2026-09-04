@@ -30,7 +30,7 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | B5 | Memory ceiling via `ResourceLimiter`; table growth capped | `runtime::limits` | RT-6 | [x] |
 | B6 | Guest code that does not yield is preempted at `preempt_ticks`; host calls are cancelled at `wall_clock_ms` | `runtime::preempt` | RT-5, BENCH-8 | [x] |
 | B7 | Wall clock via cancellation token in every host fn | `runtime::host::*` | RT-8 | [ ] |
-| B8 | Fresh `Store` per invocation; nothing reused | `runtime::invoke` | RT-10 | [ ] |
+| B8 | Fresh `Store` per invocation; nothing reused | `runtime::invoke` | RT-10 | [x] |
 | B9 | Only `unsafe` is `Component::deserialize`, artifacts written only by `helix-ctl` with dir perms 0700 | `runtime::artifact` | ST-4, runbook | [ ] |
 | B10 | Environment interface is never linked because it does not exist in v1 | `runtime::link` | RT-12 | [ ] |
 

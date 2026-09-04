@@ -20,6 +20,7 @@ use crate::error::{InvokeError, KillCause, RuntimeError, Usage};
 use crate::host::WasiHost;
 use crate::limits::HelixLimiter;
 use crate::link;
+use crate::pool::InstancePool;
 use crate::preempt::{self, default_preempt_ticks};
 
 /// Metric: memory-ceiling kills.
@@ -793,4 +794,58 @@ fn invoke_inner_with_token<H: TerminalHook>(
             Err(InvokeError::Killed { cause, usage })
         }
     }
+}
+
+/// [`run_limited`] under [`InstancePool`] accounting (HLX-29 / B8).
+///
+/// Acquires one pool slot for the duration of the call; the [`crate::pool::PoolGuard`]
+/// drops on every exit path (ok, kill, provision failure, unwind), so
+/// `helix_pool_in_use` returns to the prior value.
+///
+/// # Errors
+///
+/// Same as [`run_limited`].
+pub fn run_limited_pooled<H: TerminalHook>(
+    pool: &InstancePool,
+    engine: &Engine,
+    component: &Component,
+    budget: &ResourceBudget,
+    hook: &mut H,
+) -> Result<Usage, InvokeError> {
+    let _slot = pool.acquire();
+    run_limited(engine, component, budget, hook)
+}
+
+/// [`invoke`] under [`InstancePool`] accounting (HLX-29 / B8).
+///
+/// # Errors
+///
+/// Same as [`invoke`].
+pub fn invoke_pooled<H: TerminalHook>(
+    pool: &InstancePool,
+    engine: &Engine,
+    component: &Component,
+    caps: &CapabilitySet,
+    budget: &ResourceBudget,
+    input: &[u8],
+    hook: &mut H,
+) -> Result<InvokeSuccess, InvokeError> {
+    let _slot = pool.acquire();
+    invoke(engine, component, caps, budget, input, hook)
+}
+
+/// [`invoke_with_cancel`] under [`InstancePool`] accounting (HLX-29 / B8).
+///
+/// Slot is held for the whole async call; cancelled / killed paths still release.
+pub async fn invoke_with_cancel_pooled<H: TerminalHook>(
+    pool: &InstancePool,
+    engine: &Engine,
+    component: &Component,
+    caps: &CapabilitySet,
+    budget: &ResourceBudget,
+    input: &[u8],
+    hook: &mut H,
+) -> Result<InvokeSuccess, InvokeError> {
+    let _slot = pool.acquire();
+    invoke_with_cancel(engine, component, caps, budget, input, hook).await
 }

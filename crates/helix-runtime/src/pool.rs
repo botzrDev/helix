@@ -122,3 +122,48 @@ impl Drop for PoolGuard<'_> {
         metrics::gauge!(METRIC_POOL_IN_USE).set(n as f64);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn acquire_drop_returns_in_use_to_zero() {
+        let pool = InstancePool::new();
+        assert_eq!(pool.in_use(), 0);
+        {
+            let _a = pool.acquire();
+            assert_eq!(pool.in_use(), 1);
+            let _b = pool.acquire();
+            assert_eq!(pool.in_use(), 2);
+        }
+        assert_eq!(pool.in_use(), 0);
+    }
+
+    #[test]
+    fn concurrent_acquire_release_exact() {
+        let pool = Arc::new(InstancePool::new());
+        let n = 64usize;
+        let per = 200usize;
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let p = Arc::clone(&pool);
+            handles.push(thread::spawn(move || {
+                for _ in 0..per {
+                    let _g = p.acquire();
+                    assert!(p.in_use() >= 1);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread");
+        }
+        assert_eq!(
+            pool.in_use(),
+            0,
+            "pool must drain after concurrent acquires"
+        );
+    }
+}

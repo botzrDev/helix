@@ -1,6 +1,6 @@
 //! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
-//! bit-driven capability linking, filesystem grants, resource limits, and
-//! cancellation (M4-01…M4-05 / HLX-24…HLX-28).
+//! bit-driven capability linking, filesystem grants, resource limits,
+//! cancellation, and soak/pool accounting (M4-01…M4-06 / HLX-24…HLX-29).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -27,6 +27,12 @@
 //! [`error::KillCause::ParentDropped`] (`-32014`). Child `JoinSet` scaffolding
 //! awaits `helix:delegate` (HLX-31).
 //!
+//! **Soak / pool accounting (HLX-29):** [`pool::InstancePool::acquire`] holds a
+//! slot for each invocation (`helix_pool_in_use`); RT-10 asserts 10,000 sequential
+//! `trivial.wasm` runs via [`invoke::run_limited_pooled`] return the gauge to zero
+//! with ≤ 5 % RSS growth and no FD growth. BENCH-7 (100k at c=64) is deferred to
+//! M7-01.
+//!
 //! **Registration linker template (HLX-24):** `InstancePre` values used for
 //! `signature` at register/load are still built with
 //! `define_unknown_imports_as_traps` so registration does not require a
@@ -38,7 +44,8 @@
 //! `artifact.rs` (module-level allow for the deserialize call).
 //!
 //! BENCH-8 (preempt kill latency p99 ≤ 12 ms at `preempt_ticks = 10`) is
-//! informational until M7-01.
+//! informational until M7-01. BENCH-7 (RSS after 100k at c=64) is deferred to
+//! M7-01 (RT-10 covers the 10k sequential gate).
 
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
@@ -77,13 +84,14 @@ pub use fs::{
 };
 pub use host::WasiHost;
 pub use invoke::{
-    deliver_output, invoke, invoke_with_cancel, preempt_deadline_ticks, run_limited, InvokeHost,
-    InvokeSuccess, NopHook, RecordingHook, TerminalGuard, TerminalHook, TerminalKind,
-    TerminalRecord, METRIC_KILL_MEMORY, METRIC_KILL_OUTPUT,
+    deliver_output, invoke, invoke_pooled, invoke_with_cancel, invoke_with_cancel_pooled,
+    preempt_deadline_ticks, run_limited, run_limited_pooled, InvokeHost, InvokeSuccess, NopHook,
+    RecordingHook, TerminalGuard, TerminalHook, TerminalKind, TerminalRecord, METRIC_KILL_MEMORY,
+    METRIC_KILL_OUTPUT,
 };
 pub use limits::{HelixLimiter, DEFAULT_TABLE_ELEMENTS};
 pub use link::{link, link_with_names, linked_names, provision_pre};
-pub use pool::{InstancePool, PooledPre};
+pub use pool::{InstancePool, PoolGuard, PooledPre};
 pub use preempt::{
     default_preempt_ticks, record_preempt_kill, EpochTicker, EPOCH_TICK_MS, METRIC_KILL_EPOCH,
     METRIC_KILL_PREEMPT,

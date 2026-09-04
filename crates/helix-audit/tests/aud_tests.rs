@@ -282,3 +282,145 @@ async fn aud8_group_commit_and_sync_stamp() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// AUD-3: rotation carries last hash into new file header; verify accepts
+/// two-file sequence; break across the boundary is detected.
+#[tokio::test]
+#[cfg(not(miri))]
+async fn aud3_rotation_carry_forward_and_boundary_break() {
+    use helix_audit::{hex_encode, verify_dir, AuditWriterRuntime, VerifyError};
+
+    let dir = tmp_path("aud3-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // Deterministic ULIDs so file order is known (lexicographic Crockford).
+    let mut n = 0u8;
+    let ulid_source: helix_audit::UlidSource = Box::new(move || {
+        n = n.wrapping_add(1);
+        let mut a = [0u8; 16];
+        // Keep high bytes zero so ULID strings sort as n increases in low bits.
+        a[15] = n;
+        a
+    });
+
+    // Tiny rotate threshold so the second synced batch opens a new file.
+    let rt = AuditWriterRuntime::open_dir_with(
+        &dir,
+        "gw-aud3",
+        200, // bytes: header + a couple of frames will exceed quickly
+        std::sync::Arc::new(helix_audit::NoopSyncHook),
+        64,
+        ulid_source,
+    )
+    .await
+    .unwrap();
+    let w = rt.writer();
+
+    // Write enough synced records to force at least one rotation.
+    for i in 0..8u64 {
+        let t = if i % 2 == 0 {
+            Transition::Granted
+        } else {
+            Transition::Completed
+        };
+        w.append_synced(sample_record(t, 0)).await.unwrap();
+    }
+    drop(w);
+    rt.join().await.unwrap();
+
+    // Collect log files; expect ≥ 2.
+    let mut logs: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| helix_audit::parse_log_file_name(n).is_some())
+        })
+        .collect();
+    logs.sort();
+    assert!(
+        logs.len() >= 2,
+        "expected rotation to produce ≥2 files, got {}: {logs:?}",
+        logs.len()
+    );
+
+    // Stub caps side files for any referenced hashes (HLX-21 store not yet).
+    let caps_dir = dir.join("caps");
+    std::fs::create_dir_all(&caps_dir).unwrap();
+    for path in &logs {
+        let bytes = std::fs::read(path).unwrap();
+        let report = helix_audit::verify_file(&bytes).unwrap();
+        for frame in &report.frames {
+            if let Some(h) = frame.record.caps_hash {
+                let stub = caps_dir.join(format!("{}.cbor", hex_encode(&h)));
+                if !stub.exists() {
+                    // Minimal CBOR map {} as fixture (not a real CapabilitySet).
+                    // Full caps store writer is HLX-21.
+                    std::fs::write(&stub, [0xa0u8]).unwrap();
+                }
+            }
+        }
+    }
+
+    let report = verify_dir(&dir).expect("two-file sequence must verify");
+    assert!(report.files.len() >= 2);
+
+    // Boundary: file[i+1].header.prev_hash == file[i].head_hash
+    for win in report.files.windows(2) {
+        assert_eq!(
+            win[1].report.header.prev_hash,
+            win[0].report.head_hash,
+            "carry-forward mismatch between {} and {}",
+            win[0].path.display(),
+            win[1].path.display()
+        );
+    }
+
+    // Break across the boundary: rebuild file 2 with a wrong header prev_hash
+    // but a consistent internal chain so verify_file(file2) alone still passes.
+    {
+        use helix_audit::frame::encode_frame;
+        let second = &logs[1];
+        let bytes = std::fs::read(second).unwrap();
+        let report = helix_audit::verify_file(&bytes).unwrap();
+        let mut bad_header = report.header.clone();
+        bad_header.prev_hash = [0x5au8; 32]; // not equal to file1 head
+        let mut out = bad_header.encode_cbor().unwrap();
+        let mut prev = bad_header.prev_hash;
+        for frame in &report.frames {
+            let (fb, new_hash) = encode_frame(&frame.record, &prev).unwrap();
+            out.extend_from_slice(&fb);
+            prev = new_hash;
+        }
+        std::fs::write(second, &out).unwrap();
+        // Sanity: single-file verify still ok.
+        helix_audit::verify_file(&out).expect("file2 alone still verifies");
+    }
+
+    let err = verify_dir(&dir).expect_err("boundary break must be detected");
+    match err {
+        VerifyError::BoundaryBreak { .. } => {}
+        other => panic!("expected BoundaryBreak, got {other}"),
+    }
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Retention entry CBOR + JSON shape (format only; sink is M3-05).
+#[test]
+fn retention_entry_round_trip_shape() {
+    use helix_audit::{hex_encode, log_file_name, RetentionEntry};
+
+    let ulid = [0xabu8; 16];
+    let final_hash = [0x11u8; 32];
+    let entry = RetentionEntry::new("gw-ret", ulid, final_hash, 42, log_file_name(&ulid));
+    let cbor = entry.encode_cbor().unwrap();
+    assert!(!cbor.is_empty());
+    let j = entry.to_json();
+    assert_eq!(j["gateway_id"], "gw-ret");
+    assert_eq!(j["final_hash"], hex_encode(&final_hash));
+    assert_eq!(j["wall_time_ns"], 42);
+}

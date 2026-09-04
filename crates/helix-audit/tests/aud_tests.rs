@@ -1,4 +1,4 @@
-//! AUD-1, AUD-2, AUD-5, AUD-8.
+//! AUD-1, AUD-2, AUD-5, AUD-6, AUD-7, AUD-8.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -1082,4 +1082,223 @@ async fn aud10_witness_receive_sigkill_no_partial() {
 
     recv.shutdown().await;
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// AUD-6 (audit-side): full-disk / ENOSPC on write → `sync` returns typed
+/// `AuditError::NoSpace`; instantiate side-effect counter does not increase.
+/// Waiters receive the error (not a timeout). Health moves degraded → failed
+/// after `max_consecutive_errors`. Full e2e with JSON-RPC `-32030` and
+/// `helix_instantiate_seconds` is M5-05 / HLX-36.
+#[tokio::test]
+#[cfg(not(miri))]
+async fn aud6_enospc_sync_fail_closed_no_instantiate() {
+    use helix_audit::{
+        AuditError, AuditHealth, AuditWriterRuntime, FailClosedConfig, FaultSite, InjectedIoFault,
+        NoopSyncHook, RecordingFatal,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    let path = tmp_path("aud6.log");
+    // Linux ENOSPC = 28 → ErrorKind::StorageFull → AuditError::NoSpace.
+    let fault = InjectedIoFault::always(FaultSite::Write, 28);
+    let fatal = RecordingFatal::new();
+    let fc = FailClosedConfig::for_test(fault, Arc::clone(&fatal)).with_max_consecutive_errors(3);
+
+    let rt = AuditWriterRuntime::open_genesis_with_hook_fail_closed(
+        &path,
+        "gw-aud6",
+        ulidish(0x66),
+        Arc::new(NoopSyncHook),
+        16,
+        fc,
+    )
+    .await
+    .unwrap();
+    let w = rt.writer();
+    assert_eq!(w.health(), AuditHealth::Ok);
+
+    // Caller's duty: only instantiate after successful sync (test double).
+    let instantiate = Arc::new(AtomicU64::new(0));
+
+    let mut last_err = None;
+    for i in 0..3u32 {
+        match w.sync(sample_record(Transition::Granted, 0)).await {
+            Ok(()) => {
+                instantiate.fetch_add(1, Ordering::SeqCst);
+                panic!("sync unexpectedly succeeded on iteration {i}");
+            }
+            Err(e) => {
+                assert!(
+                    matches!(e, AuditError::NoSpace(_)),
+                    "expected NoSpace, got {e:?}"
+                );
+                assert_eq!(e.gateway_code(), AuditError::GATEWAY_CODE);
+                assert_eq!(AuditError::GATEWAY_CODE, -32030);
+                assert!(e.is_fail_closed());
+                last_err = Some(e);
+            }
+        }
+        if i < 2 {
+            assert_eq!(w.health(), AuditHealth::Degraded, "iter {i}");
+            assert!(!fatal.fired());
+        }
+    }
+
+    assert!(last_err.is_some());
+    assert_eq!(
+        instantiate.load(Ordering::SeqCst),
+        0,
+        "instantiate must not run when sync fails"
+    );
+    assert_eq!(w.health(), AuditHealth::Failed);
+    assert!(fatal.fired(), "fatal hook after max consecutive errors");
+
+    // Further syncs: channel closed (writer task exited) — still typed, not timeout.
+    let err = w
+        .sync(sample_record(Transition::Granted, 0))
+        .await
+        .expect_err("writer should be down");
+    assert!(
+        matches!(err, AuditError::ChannelClosed | AuditError::NoSpace(_)),
+        "got {err:?}"
+    );
+
+    drop(w);
+    let _ = rt.join().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// AUD-7 (audit-side): rotation target unwritable at the boundary → same
+/// fail-closed behavior (`AuditError::RotationOpen`). Full e2e `-32030` is M5-05.
+#[tokio::test]
+#[cfg(not(miri))]
+async fn aud7_rotation_unwritable_fail_closed() {
+    use helix_audit::{
+        AuditError, AuditHealth, AuditWriterRuntime, FailClosedConfig, FaultSite, InjectedIoFault,
+        NoopSyncHook, RecordingFatal,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    let dir = tmp_path("aud7-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut n = 0u8;
+    let ulid_source: helix_audit::UlidSource = Box::new(move || {
+        n = n.wrapping_add(1);
+        let mut a = [0u8; 16];
+        a[15] = n;
+        a
+    });
+
+    // EACCES on rotate open (unwritable target).
+    let fault = InjectedIoFault::always(FaultSite::RotateOpen, 13);
+    let fatal = RecordingFatal::new();
+    let fc = FailClosedConfig::for_test(fault, Arc::clone(&fatal)).with_max_consecutive_errors(3);
+
+    let rt = AuditWriterRuntime::open_dir_with_fail_closed(
+        &dir,
+        "gw-aud7",
+        200, // tiny: header + first frames force rotation
+        Arc::new(NoopSyncHook),
+        16,
+        ulid_source,
+        fc,
+    )
+    .await
+    .unwrap();
+    let w = rt.writer();
+
+    let instantiate = Arc::new(AtomicU64::new(0));
+    let mut saw_rotation_err = false;
+    let mut failures = 0u32;
+
+    // Drive until we accumulate max consecutive rotation failures.
+    for i in 0..12u32 {
+        match w.sync(sample_record(Transition::Granted, 0)).await {
+            Ok(()) => {
+                // Early records may fit before the rotate threshold.
+                instantiate.fetch_add(1, Ordering::SeqCst);
+            }
+            Err(e) => {
+                assert!(
+                    matches!(e, AuditError::RotationOpen(_)),
+                    "iter {i}: expected RotationOpen, got {e:?}"
+                );
+                assert_eq!(e.gateway_code(), -32030);
+                saw_rotation_err = true;
+                failures = failures.saturating_add(1);
+                // Caller must not instantiate on sync Err.
+            }
+        }
+        if fatal.fired() {
+            break;
+        }
+    }
+
+    assert!(saw_rotation_err, "expected at least one RotationOpen");
+    assert!(fatal.fired(), "fatal after consecutive rotation failures");
+    assert_eq!(w.health(), AuditHealth::Failed);
+    // Instantiations only count successful syncs (pre-boundary); failures do not.
+    let ok_count = instantiate.load(Ordering::SeqCst);
+    assert!(
+        ok_count < 12,
+        "should not treat failed syncs as instantiate ({ok_count})"
+    );
+    assert!(
+        failures >= 3,
+        "expected >=3 rotation failures, got {failures}"
+    );
+
+    drop(w);
+    let _ = rt.join().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Health + consecutive-error recovery: one injected failure → degraded; success → ok.
+#[tokio::test]
+#[cfg(not(miri))]
+async fn aud6_health_degraded_then_ok_on_recovery() {
+    use helix_audit::{
+        AuditError, AuditHealth, AuditWriterRuntime, FailClosedConfig, FaultSite, InjectedIoFault,
+        NoopSyncHook, RecordingFatal,
+    };
+    use std::sync::Arc;
+
+    let path = tmp_path("aud6-recover.log");
+    // Fail write once (ENOSPC), then succeed.
+    let fault = InjectedIoFault::times(FaultSite::Write, 28, 1);
+    let fatal = RecordingFatal::new();
+    let fc = FailClosedConfig::for_test(fault, Arc::clone(&fatal)).with_max_consecutive_errors(3);
+
+    let rt = AuditWriterRuntime::open_genesis_with_hook_fail_closed(
+        &path,
+        "gw-aud6r",
+        ulidish(0x67),
+        Arc::new(NoopSyncHook),
+        16,
+        fc,
+    )
+    .await
+    .unwrap();
+    let w = rt.writer();
+
+    let err = w
+        .sync(sample_record(Transition::Granted, 0))
+        .await
+        .expect_err("first sync should ENOSPC");
+    assert!(matches!(err, AuditError::NoSpace(_)));
+    assert_eq!(w.health(), AuditHealth::Degraded);
+    assert!(!fatal.fired());
+
+    w.sync(sample_record(Transition::Granted, 0))
+        .await
+        .expect("second sync should succeed");
+    assert_eq!(w.health(), AuditHealth::Ok);
+    assert!(!fatal.fired());
+
+    drop(w);
+    rt.join().await.unwrap();
+    let _ = std::fs::remove_file(&path);
 }

@@ -406,7 +406,7 @@ fn read_opt_fixed<const N: usize>(d: &mut Decoder<'_>) -> Result<Option<[u8; N]>
     Ok(Some(read_fixed(d)?))
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum RecordError {
     #[error("cbor decode: {0}")]
     Decode(String),

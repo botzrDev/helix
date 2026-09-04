@@ -1048,12 +1048,16 @@ name = "helix-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cap-fs-ext",
+ "cap-std",
  "helix-caps",
+ "libc",
  "metrics",
  "serde",
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
  "toml",
  "wasmtime",
  "wasmtime-wasi",

@@ -1,6 +1,6 @@
 //! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
-//! bit-driven capability linking, and filesystem grants
-//! (M4-01 / HLX-24, M4-02 / HLX-25, M4-03 / HLX-26).
+//! bit-driven capability linking, filesystem grants, and resource limits
+//! (M4-01…M4-04 / HLX-24…HLX-27).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -14,6 +14,11 @@
 //! with `O_NOFOLLOW` and installs cap-std preopens on [`host::WasiHost`]. Host
 //! path strings never cross into the guest.
 //!
+//! **Limits (HLX-27):** [`limits::HelixLimiter`] caps linear memory and table
+//! growth; [`preempt::EpochTicker`] advances the engine epoch every 1 ms;
+//! [`bounded::BoundedWriter`] enforces `output_bytes` (S4); [`invoke`] owns the
+//! fresh Store, epoch deadline, and terminal-record drop guard (D3).
+//!
 //! **Registration linker template (HLX-24):** `InstancePre` values used for
 //! `signature` at register/load are still built with
 //! `define_unknown_imports_as_traps` so registration does not require a
@@ -23,17 +28,24 @@
 //! `#![forbid(unsafe_code)]`. The single permitted `unsafe` site is
 //! [`artifact::deserialize_component`] (`Component::deserialize`), confined to
 //! `artifact.rs` (module-level allow for the deserialize call).
+//!
+//! BENCH-8 (preempt kill latency p99 ≤ 12 ms at `preempt_ticks = 10`) is
+//! informational until M7-01.
 
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod artifact;
+pub mod bounded;
 pub mod config;
 pub mod engine;
 pub mod error;
 pub mod fs;
 pub mod host;
+pub mod invoke;
+pub mod limits;
 pub mod link;
 pub mod pool;
+pub mod preempt;
 pub mod register;
 pub mod signature;
 
@@ -41,16 +53,27 @@ pub use artifact::{
     artifact_paths, digest_hex, digest_of_bytes, load_artifact_dir, write_artifact, ArtifactPaths,
     LoadedArtifact,
 };
+pub use bounded::{BoundedWriter, BoundedWriterError};
 pub use config::RuntimeConfig;
 pub use engine::build_engine;
-pub use error::RuntimeError;
+pub use error::{InvokeError, KillCause, RuntimeError, Usage};
 pub use fs::{
     apply_filesystem_grants, guest_preopen_name, open_dir_nofollow, open_file_nofollow,
     FileGrantStages, FsGrantError,
 };
 pub use host::WasiHost;
+pub use invoke::{
+    deliver_output, invoke, preempt_deadline_ticks, run_limited, InvokeHost, InvokeSuccess,
+    NopHook, RecordingHook, TerminalGuard, TerminalHook, TerminalKind, TerminalRecord,
+    METRIC_KILL_MEMORY, METRIC_KILL_OUTPUT,
+};
+pub use limits::{HelixLimiter, DEFAULT_TABLE_ELEMENTS};
 pub use link::{link, link_with_names, linked_names, provision_pre};
 pub use pool::{InstancePool, PooledPre};
+pub use preempt::{
+    default_preempt_ticks, record_preempt_kill, EpochTicker, EPOCH_TICK_MS, METRIC_KILL_EPOCH,
+    METRIC_KILL_PREEMPT,
+};
 pub use register::{
     format_register_output, register_wasm, reregister_all, RegisterOutcome, ReregisterReport,
 };

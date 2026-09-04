@@ -6,10 +6,12 @@
 //! tree, `policy()` lookup, sync reload, stale-snapshot age check.
 //! M2-03 (HLX-16): pure [`effective`] composition — caps attenuation, budget
 //! `is_within`/`min`, depth/fan-out checks, wire interning against the guard.
+//! M2-04 (HLX-17): operator helpers for `helix-ctl policy check` / `explain` /
+//! `reload` ([`tooling`]).
 //!
-//! No `helix-ctl` (HLX-17). No `runtime::delegate` / wasmtime (M4-08).
+//! No `runtime::delegate` / wasmtime (M4-08).
 //!
-//! Cites: `policy-format.md` §§1–4, ADR-008 A.2/A.3/A.4/C.1/C.2/C.3/E.1,
+//! Cites: `policy-format.md` §§1–5, ADR-008 A.2/A.3/A.4/C.1/C.2/C.3/E.1,
 //! ADR-009 A.1/A.3/B.1/E.1.
 
 #![forbid(unsafe_code)]
@@ -23,6 +25,7 @@ mod guard;
 mod ids;
 mod resolve;
 mod store;
+mod tooling;
 mod validate;
 
 pub use effective::{
@@ -39,5 +42,9 @@ pub use guard::{
 };
 pub use ids::{encode_thumbprint, parse_identity_thumbprint, parse_tool_digest};
 pub use resolve::{resolve_host, PolicySnapshot, ResolvedGrant};
-pub use store::{ArtifactStore, MemoryArtifactStore};
+pub use store::{ArtifactStore, DirArtifactStore, MemoryArtifactStore};
+pub use tooling::{
+    caps_budget_wire_json, check_policy, explain_grant_json, format_policy_errors,
+    load_snapshot_for_explain, send_sighup, CheckPasses, CheckReport, GrantListing, PathGrantLine,
+};
 pub use validate::{validate_structural, validate_structural_with_fs};

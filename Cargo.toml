@@ -33,6 +33,7 @@ toml = "0.8.23"
 base64 = "0.22.1"
 log = "0.4.27"
 arc-swap = "1.7"
+clap = { version = "4.5", features = ["derive"] }
 
 [workspace.lints.rust]
 unexpected_cfgs = "warn"

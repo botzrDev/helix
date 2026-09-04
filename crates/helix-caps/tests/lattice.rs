@@ -7,6 +7,21 @@ use helix_caps::{
     Method, MethodMask,
 };
 use proptest::prelude::*;
+use proptest::test_runner::Config as ProptestConfig;
+
+/// Miri-friendly proptest config: no file persistence (getcwd under isolation),
+/// and fewer cases under Miri so ST-5 finishes in CI.
+fn prop_config() -> ProptestConfig {
+    #[cfg(miri)]
+    let cases = 32;
+    #[cfg(not(miri))]
+    let cases = ProptestConfig::default().cases;
+    ProptestConfig {
+        cases,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    }
+}
 
 const ALL_IFACES: [Interface; 5] = [
     Interface::Stdio,
@@ -214,6 +229,7 @@ fn set_strategy() -> impl Strategy<Value = CapabilitySet> {
 
 // CAPS-1
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps1_is_subset_of_reflexive(a in set_strategy()) {
         prop_assert!(a.is_subset_of(&a));
@@ -222,6 +238,7 @@ proptest! {
 
 // CAPS-2
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps2_is_subset_of_antisymmetric(a in set_strategy(), b in set_strategy()) {
         if a.is_subset_of(&b) && b.is_subset_of(&a) {
@@ -232,6 +249,7 @@ proptest! {
 
 // CAPS-3
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps3_is_subset_of_transitive(
         a in set_strategy(),
@@ -246,6 +264,7 @@ proptest! {
 
 // CAPS-4
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps4_attenuate_ok_iff_subset(p in set_strategy(), r in set_strategy()) {
         let ok = CapabilitySet::attenuate(&p, &r).is_ok();
@@ -255,6 +274,7 @@ proptest! {
 
 // CAPS-5
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps5_attenuate_result_subset_of_parent(p in set_strategy(), r in set_strategy()) {
         if let Ok(s) = CapabilitySet::attenuate(&p, &r) {
@@ -266,6 +286,7 @@ proptest! {
 
 // CAPS-6
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps6_meet_is_glb(a in set_strategy(), b in set_strategy(), c in set_strategy()) {
         let m = a.meet(&b);
@@ -279,6 +300,7 @@ proptest! {
 
 // CAPS-10
 proptest! {
+    #![proptest_config(prop_config())]
     #[test]
     fn caps10_empty_subset_of_every_x(x in set_strategy()) {
         prop_assert!(CapabilitySet::EMPTY.is_subset_of(&x));

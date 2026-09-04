@@ -38,6 +38,10 @@ struct PathEntry {
 /// Snapshot-scoped intern table. helix-policy builds one at load.
 /// `helix-ctl run --caps` may build a throwaway (ADR-009 E.2).
 ///
+/// `Interner` is not a lattice element. It is snapshot infrastructure that
+/// makes `DirGrant` / `FileGrant` prefix checks an id comparison; the
+/// authority lattice lives on [`crate::CapabilitySet`].
+///
 /// Prefix containment for `DirGrant` is precomputed: the table stores each
 /// path's parent chain as ids, so containment is an id comparison, not a
 /// memcmp (ADR-008 A.3).
@@ -50,7 +54,8 @@ struct PathEntry {
 /// ADR-008 A.3 (no `DeserializeSeed` / thread-local / `from_wire` named).
 /// M1 chooses the mechanism: a successful `CapabilitySet` deserialization
 /// owns a throwaway [`Interner`] built from the wire paths so JSON
-/// round-trips resolve without an external snapshot (CAPS-9).
+/// round-trips resolve without an external snapshot (CAPS-9). The invariant
+/// is: construction always goes through `CapabilitySet::new`.
 #[derive(Clone, Debug)]
 pub struct Interner {
     paths: Vec<PathEntry>,
@@ -84,7 +89,7 @@ impl Interner {
     ///
     /// Paths must already be absolute and free of `..` / `.` components;
     /// callers that accept untrusted strings should use
-    /// [`validate_canonical_path`] first. This method does not perform I/O.
+    /// `validate_canonical_path` first. This method does not perform I/O.
     ///
     /// # Panics
     ///

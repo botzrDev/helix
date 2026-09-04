@@ -131,6 +131,10 @@ impl FileGrant {
 /// A directory the sandbox may open. One `DirGrant` is one cap-std preopen.
 /// The runtime does not expand directories (ADR-008 A.2).
 ///
+/// `DirGrant` is not itself a lattice type. It participates in the
+/// [`crate::CapabilitySet`] lattice via the prefix-containment subset rules
+/// below (ADR-008 A.2); [`crate::ResourceBudget`] stays outside that lattice.
+///
 /// Sorted and deduplicated by root. Subset is prefix containment: a
 /// `DirGrant` in self is covered by a `DirGrant` in other whose root is an
 /// ancestor-or-equal path and whose mode is greater-or-equal. A `FileGrant`

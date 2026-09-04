@@ -68,6 +68,8 @@ jobs:
         with:
           components: miri
       - uses: Swatinem/rust-cache@v2
+      # helix-caps lattice proptest disables file persistence under cfg(miri);
+      # helix-audit remains covered from HLX-5.
       - run: cargo +nightly miri test -p helix-caps -p helix-audit
 
   st6-deny:

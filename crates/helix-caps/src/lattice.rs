@@ -1,7 +1,8 @@
 //! Lattice operations on [`CapabilitySet`] (HLX-11 / M1-02).
 //!
 //! Subset, meet, and attenuation follow ADR-008 A.2 (prefix `DirGrant`) and
-//! A.3 (intern-id merge walk). Budget is not a lattice element.
+//! A.3 (intern-id merge walk). [`crate::ResourceBudget`] is not a lattice
+//! element; [`crate::Interner`] is snapshot infrastructure only.
 
 use crate::{
     CapabilitySet, CapsError, DirGrant, FileGrant, FileMode, HostGrant, Interface, Interner, PathId,

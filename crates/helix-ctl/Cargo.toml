@@ -11,6 +11,7 @@ publish.workspace = true
 clap = { workspace = true }
 helix-policy = { path = "../helix-policy" }
 helix-audit = { path = "../helix-audit" }
+helix-runtime = { path = "../helix-runtime" }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "fs", "signal"] }
 

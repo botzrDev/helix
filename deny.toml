@@ -4,6 +4,11 @@ all-features = false
 [advisories]
 version = 2
 yanked = "warn"
+# Transitive via wasmtime → fxprof-processed-profile → fxhash. No safe upgrade;
+# tracked upstream in wasmtime. Ignore until wasmtime drops fxhash (HLX-24).
+ignore = [
+    "RUSTSEC-2025-0057",
+]
 
 [licenses]
 version = 2

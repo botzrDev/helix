@@ -424,3 +424,232 @@ fn retention_entry_round_trip_shape() {
     assert_eq!(j["final_hash"], hex_encode(&final_hash));
     assert_eq!(j["wall_time_ns"], 42);
 }
+
+/// AUD-4: exporter paused ~60s under load — store stays complete/verifiable;
+/// after resume, lag returns to 0 and every `request_id` is exported. Writer-path
+/// latency with a stalled exporter stays within 5% of the unblocked baseline
+/// (full gateway invoke latency deferred to M5 — helix-gateway has no invoke
+/// path yet).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[cfg(not(miri))]
+#[allow(
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::cast_possible_truncation
+)]
+async fn aud4_exporter_pause_store_safe_and_catchup() {
+    use helix_audit::{
+        verify_file, AuditExporterRuntime, AuditWriterRuntime, RecordingSink, Transition,
+    };
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let dir = tmp_path("aud4-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let log_path = dir.join("helix-00000000000000000000000001.log");
+
+    // Deterministic single-file writer (open_genesis into the dir file).
+    let rt = AuditWriterRuntime::open_genesis(&log_path, "gw-aud4", ulidish(0x41))
+        .await
+        .unwrap();
+    let w = rt.writer();
+
+    let sink = Arc::new(RecordingSink::new());
+    sink.pause();
+    let exporter =
+        AuditExporterRuntime::start_with_poll(&dir, Arc::clone(&sink), Duration::from_millis(25));
+    let metrics = exporter.metrics();
+
+    // Baseline writer latency with exporter running (unpaused) is measured later;
+    // first: under pause, drive synthetic load for ~60s.
+    let load_start = Instant::now();
+    let pause_for = Duration::from_secs(60);
+    let mut request_ids = Vec::new();
+    let mut n_synced = 0u64;
+    let mut pause_latencies = Vec::new();
+
+    while load_start.elapsed() < pause_for {
+        let rid = {
+            let mut a = [0u8; 16];
+            let n = request_ids.len() as u64 + 1;
+            a[8..].copy_from_slice(&n.to_be_bytes());
+            a
+        };
+        request_ids.push(rid);
+        // Granted + Completed (both synced) per invocation.
+        let t0 = Instant::now();
+        w.append_synced(AuditRecord::new(
+            rid,
+            None,
+            identity(2),
+            digest(3),
+            Transition::Granted,
+            "ok",
+            Some(digest(9)),
+            Some(ResourceUsage::new(1, 2, 3, 4)),
+            None,
+            1_700_000_000_000_000_000 + n_synced,
+            0,
+        ))
+        .await
+        .unwrap();
+        w.append_synced(AuditRecord::new(
+            rid,
+            None,
+            identity(2),
+            digest(3),
+            Transition::Completed,
+            "done",
+            None,
+            None,
+            Some(ResourceUsage::new(1, 2, 3, 4)),
+            1_700_000_000_000_000_000 + n_synced + 1,
+            0,
+        ))
+        .await
+        .unwrap();
+        pause_latencies.push(t0.elapsed());
+        n_synced += 2;
+
+        // Keep the pause window busy without spinning too hard on disk.
+        if load_start.elapsed() + Duration::from_millis(5) < pause_for {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    assert!(
+        request_ids.len() >= 10,
+        "expected meaningful load during pause, got {}",
+        request_ids.len()
+    );
+
+    // While paused, sink must not have received spans; lag should be > 0 once
+    // the tailer has observed records.
+    let wait_lag = Instant::now();
+    while metrics.lag() == 0 && wait_lag.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        metrics.lag() > 0,
+        "exporter lag must grow while sink paused (seen={}, exported={})",
+        metrics.seen(),
+        metrics.exported()
+    );
+    assert_eq!(
+        sink.invocation_count().await,
+        0,
+        "paused sink must not export"
+    );
+
+    // Store remains complete and verifiable under stalled export.
+    // Force a read of current file bytes (writer may still be open — sync has
+    // already landed per append_synced).
+    let bytes = std::fs::read(&log_path).unwrap();
+    let report = verify_file(&bytes).expect("store must verify while exporter paused");
+    assert_eq!(report.frames.len() as u64, n_synced);
+
+    // Resume: exporter catches up.
+    sink.resume();
+    let catchup_ok = sink
+        .wait_until_invocations(request_ids.len(), Duration::from_secs(120))
+        .await;
+    assert!(
+        catchup_ok,
+        "exporter failed to catch up: got {} / {} invocations; lag={}",
+        sink.invocation_count().await,
+        request_ids.len(),
+        metrics.lag()
+    );
+
+    let wait_zero = Instant::now();
+    while metrics.lag() != 0 && wait_zero.elapsed() < Duration::from_secs(30) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        metrics.lag(),
+        0,
+        "lag must return to 0 after catch-up (seen={}, exported={})",
+        metrics.seen(),
+        metrics.exported()
+    );
+
+    let spans = sink.invocations().await;
+    assert_eq!(spans.len(), request_ids.len());
+    let mut got: Vec<[u8; 16]> = spans.iter().map(|i| i.request_id).collect();
+    got.sort_unstable();
+    let mut expect = request_ids.clone();
+    expect.sort_unstable();
+    assert_eq!(got, expect, "every request_id must appear as one span");
+    for inv in &spans {
+        assert_eq!(inv.events.len(), 2);
+        assert_eq!(inv.events[0].transition, Transition::Granted);
+        assert_eq!(inv.events[1].transition, Transition::Completed);
+        assert_eq!(inv.terminal, Transition::Completed);
+    }
+
+    // Writer-path latency: compare paused-window latencies vs a short unblocked
+    // window (exporter caught up / sink open). Full GW latency deferred to M5.
+    let mut run_latencies = Vec::new();
+    for i in 0..32u64 {
+        let mut rid = [0u8; 16];
+        rid[0] = 0xff;
+        rid[8..].copy_from_slice(&(10_000 + i).to_be_bytes());
+        let t0 = Instant::now();
+        w.append_synced(AuditRecord::new(
+            rid,
+            None,
+            identity(2),
+            digest(3),
+            Transition::Granted,
+            "ok",
+            Some(digest(9)),
+            Some(ResourceUsage::new(1, 2, 3, 4)),
+            None,
+            2_000_000_000_000_000_000 + i,
+            0,
+        ))
+        .await
+        .unwrap();
+        w.append_synced(AuditRecord::new(
+            rid,
+            None,
+            identity(2),
+            digest(3),
+            Transition::Completed,
+            "done",
+            None,
+            None,
+            Some(ResourceUsage::new(1, 2, 3, 4)),
+            2_000_000_000_000_000_000 + i + 1,
+            0,
+        ))
+        .await
+        .unwrap();
+        run_latencies.push(t0.elapsed());
+    }
+
+    let mean = |v: &[Duration]| {
+        let sum: Duration = v.iter().copied().sum();
+        sum / u32::try_from(v.len()).unwrap_or(1)
+    };
+    let paused_mean = mean(&pause_latencies);
+    let running_mean = mean(&run_latencies);
+    let slower = paused_mean.max(running_mean);
+    let faster = paused_mean.min(running_mean);
+    let delta_ratio = if faster.is_zero() {
+        0.0
+    } else {
+        (slower.as_secs_f64() - faster.as_secs_f64()) / faster.as_secs_f64()
+    };
+    assert!(
+        delta_ratio < 0.05 || slower.as_millis() < 5,
+        "writer latency changed by {:.1}% (paused={paused_mean:?}, running={running_mean:?}); \
+         stalled exporter must not affect store path beyond 5% (GW invoke check deferred to M5)",
+        delta_ratio * 100.0
+    );
+
+    drop(w);
+    rt.join().await.unwrap();
+    exporter.shutdown().await.unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}

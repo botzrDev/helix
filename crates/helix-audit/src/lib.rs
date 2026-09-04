@@ -3,7 +3,7 @@
 //! Encoding: RFC 8949 §4.2.1 deterministic CBOR via **minicbor** (integer keys
 //! 0–11). Framing and group commit per ADR-008 D.1 / ADR-009 D.1 /
 //! `interfaces/audit-record.md`. Rotation with header `prev_hash` carry-forward
-//! (M3-02 / HLX-19).
+//! (M3-02 / HLX-19). `OTel` tail exporter (M3-03 / HLX-20, ADR-005).
 //!
 //! Caps side-file **writer/store** is M3-04 / HLX-21. This crate verifies that
 //! referenced `caps/<hex>.cbor` files exist; fixtures may stub them.
@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
+pub mod export;
 pub mod frame;
 pub mod header;
 pub mod hook;
@@ -22,6 +23,11 @@ pub mod tags;
 pub mod verify;
 pub mod writer;
 
+pub use export::{
+    AuditExporterRuntime, ExportError, ExportMetrics, ExportSink, ExportedEvent,
+    ExportedInvocation, OtelExportSink, RecordingSink, WitnessAttrs, INVOCATION_SPAN_NAME,
+    WITNESS_SPAN_NAME,
+};
 pub use frame::{encode_frame, hash_frame_bytes, Frame, FrameError, HASH_LEN};
 pub use header::{FileHeader, HeaderError};
 pub use hook::{NoopSyncHook, SequenceStampHook, SyncHook};

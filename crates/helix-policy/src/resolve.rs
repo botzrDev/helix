@@ -61,7 +61,7 @@ impl ResolvedGrant {
     }
 }
 
-/// Immutable interned snapshot. No `ArcSwap` (HLX-15).
+/// Immutable interned snapshot held behind [`crate::PolicyHolder`]'s `ArcSwap`.
 #[derive(Clone, Debug)]
 pub struct PolicySnapshot {
     interner: Interner,
@@ -69,6 +69,10 @@ pub struct PolicySnapshot {
     identities: HashMap<String, Identity>,
     tools: HashMap<String, ToolDigest>,
     warnings: Vec<String>,
+    /// Monotonic version stamped by [`crate::PolicyHolder`] on each successful swap.
+    version: u64,
+    /// Instant of the successful load/reload that produced this snapshot.
+    loaded_at: std::time::Instant,
 }
 
 impl PolicySnapshot {
@@ -105,6 +109,50 @@ impl PolicySnapshot {
     #[must_use]
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// `policy_version` for `helix.health` (ADR-008 C.3 / policy-format §4).
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// When this snapshot was swapped in.
+    #[must_use]
+    pub fn loaded_at(&self) -> std::time::Instant {
+        self.loaded_at
+    }
+
+    /// Direct lookup returning caps and budget refs (policy-format §3).
+    #[must_use]
+    pub fn policy(
+        &self,
+        identity: &Identity,
+        digest: &ToolDigest,
+    ) -> Option<(&CapabilitySet, &ResourceBudget)> {
+        self.grants
+            .get(&(*identity, *digest))
+            .map(|g| (&g.caps, &g.budget))
+    }
+
+    /// Resolve a tool alias against this snapshot's table.
+    #[must_use]
+    pub fn resolve_alias(&self, name: &str) -> Option<ToolDigest> {
+        self.tools.get(name).copied()
+    }
+
+    /// Stamp `version` / `loaded_at` after a successful holder swap. Used by the holder.
+    pub(crate) fn stamp(mut self, version: u64, loaded_at: std::time::Instant) -> Self {
+        self.version = version;
+        self.loaded_at = loaded_at;
+        self
+    }
+
+    /// Test/helper: override `loaded_at` without reloading.
+    #[must_use]
+    pub fn with_loaded_at(mut self, loaded_at: std::time::Instant) -> Self {
+        self.loaded_at = loaded_at;
+        self
     }
 }
 
@@ -244,6 +292,8 @@ fn build_snapshot<S: ArtifactStore>(
             identities,
             tools,
             warnings,
+            version: 0,
+            loaded_at: std::time::Instant::now(),
         })
     } else {
         Err(errors)

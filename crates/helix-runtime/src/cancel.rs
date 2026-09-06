@@ -76,10 +76,10 @@ where
     }
 }
 
-/// Stub blocking host call (HTTP tarpit stand-in until HLX-30 / M4-07).
+/// Parks until `token` is cancelled (legacy RT-8 double; prefer real HTTP).
 ///
-/// Parks until `token` is cancelled. Used by RT-8 to prove wall-clock cancel
-/// interrupts a host op that would otherwise block forever.
+/// Kept for unit coverage of token parking. RT-8 now uses
+/// [`crate::http::host_http_get_status`] against a tarpit listener.
 pub async fn stub_blocking_host(token: &CancellationToken) {
     token.cancelled().await;
 }

@@ -218,6 +218,24 @@ impl wasmtime_wasi::WasiView for InvokeHost {
     }
 }
 
+impl wasmtime_wasi_http::WasiHttpView for InvokeHost {
+    fn ctx(&mut self) -> &mut wasmtime_wasi_http::WasiHttpCtx {
+        wasmtime_wasi_http::WasiHttpView::ctx(&mut self.wasi)
+    }
+
+    fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
+        wasmtime_wasi_http::WasiHttpView::table(&mut self.wasi)
+    }
+
+    fn send_request(
+        &mut self,
+        request: hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
+        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
+    ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
+        wasmtime_wasi_http::WasiHttpView::send_request(&mut self.wasi, request, config)
+    }
+}
+
 /// Successful invoke with bounded output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvokeSuccess {
@@ -254,7 +272,9 @@ fn map_trap_to_kill(err: &wasmtime::Error, host: &InvokeHost) -> KillCause {
         return KillCause::Memory;
     }
     let msg = format!("{err}").to_ascii_lowercase();
-    if msg.contains("epoch") || msg.contains("interrupt") {
+    if msg.contains("wall-clock") || msg.contains(crate::http::WALL_CLOCK_TRAP_MSG) {
+        KillCause::WallClock
+    } else if msg.contains("epoch") || msg.contains("interrupt") {
         KillCause::Preempted
     } else if msg.contains("memory ceiling") || msg.contains("out of memory") {
         KillCause::Memory
@@ -624,7 +644,7 @@ impl InvokeErrorPayload {
 ///
 /// Child `JoinSet` scaffolding lives on [`crate::cancel::RequestLifecycle`]
 /// (filled by `helix:delegate` in HLX-31). This helper covers wall-clock on the
-/// request path; RT-8 exercises the stub host via [`crate::cancel::run_with_wall_clock`].
+/// request path; RT-8 exercises real HTTP via [`crate::http::host_http_get_status`].
 pub async fn invoke_with_cancel<H: TerminalHook>(
     engine: &Engine,
     component: &Component,

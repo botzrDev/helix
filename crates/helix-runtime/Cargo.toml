@@ -12,6 +12,17 @@ helix-caps = { path = "../helix-caps" }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-io = { workspace = true }
+# default-features off: avoid rustls 0.22 / rustls-webpki 0.102 advisories from
+# wasmtime-wasi-http's bundled TLS; helix ships its own send path (HLX-30).
+wasmtime-wasi-http = { workspace = true, default-features = false }
+http = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1"] }
+bytes = { workspace = true }
+reqwest = { workspace = true }
+http-body-util = "0.1"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 anyhow = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
@@ -22,12 +33,14 @@ cap-std = { workspace = true }
 cap-fs-ext = "3"
 libc = "0.2"
 tempfile = "3"
-tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "net"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+http-body-util = "0.1"
+bytes = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net"] }
 
 [lints]
 workspace = true

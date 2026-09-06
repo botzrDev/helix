@@ -1,7 +1,7 @@
 //! RT-8 / RT-9 cancellation (HLX-28 / M4-05).
 //!
-//! RT-8 uses a stub blocking host until wasi:http (HLX-30). RT-9 uses a test
-//! double child in the parent `JoinSet` until helix:delegate (HLX-31).
+//! RT-8 legacy stub remains here; real HTTP tarpit coverage is in `rt8_http.rs`
+//! (HLX-30). RT-9 uses a test double child until helix:delegate (HLX-31).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

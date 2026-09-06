@@ -26,10 +26,10 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | B1 | Identity is content digest; alias resolved before policy; grants pin alias and digest | `helix-policy::aliases` | POL-1 rules 2, 10 | [ ] |
 | B2 | Blank linker; unlinked imports fail closed | `runtime::link` | RT-1, RT-12 | [ ] |
 | B3 | Filesystem via cap-std, `O_NOFOLLOW`, `FileGrant` and `DirGrant` | `runtime::fs` | RT-2, RT-3, RT-4 | [x] |
-| B4 | HTTP authority and method enforced in host handler | `runtime::http` | RT-8, adversarial `slowhost` | [ ] |
+| B4 | HTTP authority and method enforced in host handler | `runtime::http` | RT-8, adversarial `slowhost` | [x] |
 | B5 | Memory ceiling via `ResourceLimiter`; table growth capped | `runtime::limits` | RT-6 | [x] |
 | B6 | Guest code that does not yield is preempted at `preempt_ticks`; host calls are cancelled at `wall_clock_ms` | `runtime::preempt` | RT-5, BENCH-8 | [x] |
-| B7 | Wall clock via cancellation token in every host fn | `runtime::host::*` | RT-8 | [ ] |
+| B7 | Wall clock via cancellation token in every host fn | `runtime::host::*` | RT-8 | [x] |
 | B8 | Fresh `Store` per invocation; nothing reused | `runtime::invoke` | RT-10 | [x] |
 | B9 | Only `unsafe` is `Component::deserialize`, artifacts written only by `helix-ctl` with dir perms 0700 | `runtime::artifact` | ST-4, runbook | [ ] |
 | B10 | Environment interface is never linked because it does not exist in v1 | `runtime::link` | RT-12 | [ ] |

@@ -5,6 +5,7 @@
 
 mod audit;
 mod policy;
+mod run;
 mod tool;
 
 use clap::{Parser, Subcommand};
@@ -24,6 +25,8 @@ enum Commands {
     Audit(audit::AuditArgs),
     /// Tool register / reregister-all (M4-01 / HLX-24).
     Tool(tool::ToolArgs),
+    /// Local invoke with caps JSON or policy snapshot (M6-02 / HLX-39).
+    Run(run::RunArgs),
 }
 
 fn main() {
@@ -32,6 +35,7 @@ fn main() {
         Commands::Policy(args) => policy::run(args),
         Commands::Audit(args) => audit::run(args),
         Commands::Tool(args) => tool::run(args),
+        Commands::Run(args) => run::run(args),
     };
     std::process::exit(code);
 }

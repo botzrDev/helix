@@ -1085,10 +1085,15 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "helix-audit",
+ "helix-caps",
  "helix-policy",
  "helix-runtime",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tokio-util",
+ "wasmtime",
 ]
 
 [[package]]

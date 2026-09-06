@@ -410,6 +410,7 @@ pub(crate) enum WitToolRef {
     Digest(Vec<u8>),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, ComponentType, Lift, Lower)]
 #[component(record)]
 pub(crate) struct WitDelegationRequest {
@@ -419,6 +420,7 @@ pub(crate) struct WitDelegationRequest {
     input: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, ComponentType, Lift, Lower)]
 #[component(record)]
 pub(crate) struct WitDelegationResult {
@@ -429,6 +431,7 @@ pub(crate) struct WitDelegationResult {
     usage: WitResourceUsage,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, ComponentType, Lift, Lower)]
 #[component(enum)]
 #[repr(u8)]
@@ -445,6 +448,7 @@ pub(crate) enum WitKillCause {
     ParentDropped,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, ComponentType, Lift, Lower)]
 #[component(variant)]
 pub(crate) enum WitInvokeError {
@@ -456,6 +460,7 @@ pub(crate) enum WitInvokeError {
     Internal(String),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, ComponentType, Lift, Lower)]
 #[component(variant)]
 pub(crate) enum WitDelegateError {
@@ -483,6 +488,7 @@ pub(crate) enum WitDelegateError {
     ChildToolError(WitInvokeError),
 }
 
+#[allow(dead_code)]
 fn wit_kill(cause: KillCause) -> WitKillCause {
     match cause {
         KillCause::Preempted | KillCause::Panic => WitKillCause::Preempted,
@@ -493,6 +499,7 @@ fn wit_kill(cause: KillCause) -> WitKillCause {
     }
 }
 
+#[allow(dead_code)]
 fn to_wit_error(err: DelegateError) -> WitDelegateError {
     match err {
         DelegateError::UnknownTool => WitDelegateError::UnknownTool,
@@ -516,6 +523,7 @@ fn to_wit_error(err: DelegateError) -> WitDelegateError {
     }
 }
 
+#[allow(dead_code)]
 fn usage_to_wit(u: Usage) -> WitResourceUsage {
     WitResourceUsage {
         preempt_ticks: u32::try_from(u.preempt_ticks).unwrap_or(u32::MAX),
@@ -1289,56 +1297,136 @@ fn run_child_sync<H: TerminalHook>(
     }
 }
 
-/// Add `helix:tool/delegate@1.0.0` (and type/caps stubs) to a linker.
+/// Add `helix:tool/{types,caps,delegate}@1.0.0` to a linker (HLX-39).
+///
+/// Uses wasmtime component bindgen so type exports typecheck against guest
+/// components (empty `instance()` stubs are not enough).
 pub fn add_delegate_to_linker<T>(
     linker: &mut wasmtime::component::Linker<T>,
 ) -> Result<(), RuntimeError>
 where
-    T: DelegateHostView + Send + 'static,
+    T: DelegateHostView
+        + crate::delegate_bindgen::helix::tool::types::Host
+        + crate::delegate_bindgen::helix::tool::caps::Host
+        + crate::delegate_bindgen::helix::tool::delegate::Host
+        + Send
+        + 'static,
 {
-    // Type-only interfaces: export the type names guests import.
-    {
-        let mut inst = linker
-            .instance("helix:tool/types@1.0.0")
-            .map_err(|e| RuntimeError::provision(e.to_string()))?;
-        // Types are structural via ComponentType on the function; empty instance ok
-        // when guests only import type aliases. Some components need no funcs.
-        let _ = &mut inst;
-    }
-    {
-        let mut inst = linker
-            .instance("helix:tool/caps@1.0.0")
-            .map_err(|e| RuntimeError::provision(e.to_string()))?;
-        let _ = &mut inst;
-    }
-
-    let mut inst = linker
-        .instance("helix:tool/delegate@1.0.0")
-        .map_err(|e| RuntimeError::provision(e.to_string()))?;
-
-    inst.func_wrap(
-        "invoke",
-        |mut caller: wasmtime::StoreContextMut<'_, T>,
-         (req,): (WitDelegationRequest,)|
-         -> anyhow::Result<(Result<WitDelegationResult, WitDelegateError>,)> {
-            let Some(ctx) = caller.data_mut().delegation_ctx_mut() else {
-                return Ok((Err(WitDelegateError::Denied),));
-            };
-            match invoke_delegation(ctx, req.tool, req.requested, req.budget, req.input) {
-                Ok(Ok(success)) => Ok((Ok(WitDelegationResult {
-                    request_id: request_id_string(success.request_id),
-                    digest: success.digest.as_bytes().to_vec(),
-                    output: success.output,
-                    usage: usage_to_wit(success.usage),
-                }),)),
-                Ok(Err(e)) => Ok((Err(to_wit_error(e)),)),
-                Err(trap) => Err(anyhow::anyhow!(trap)),
-            }
-        },
-    )
-    .map_err(|e| RuntimeError::provision(e.to_string()))?;
-
+    use wasmtime::component::HasSelf;
+    crate::delegate_bindgen::helix::tool::types::add_to_linker::<T, HasSelf<_>>(linker, |t| t)
+        .map_err(|e| RuntimeError::provision(format!("link helix:tool/types: {e}")))?;
+    crate::delegate_bindgen::helix::tool::caps::add_to_linker::<T, HasSelf<_>>(linker, |t| t)
+        .map_err(|e| RuntimeError::provision(format!("link helix:tool/caps: {e}")))?;
+    crate::delegate_bindgen::helix::tool::delegate::add_to_linker::<T, HasSelf<_>>(linker, |t| t)
+        .map_err(|e| RuntimeError::provision(format!("link helix:tool/delegate: {e}")))?;
     Ok(())
+}
+
+impl crate::delegate_bindgen::helix::tool::types::Host for crate::invoke::InvokeHost {}
+impl crate::delegate_bindgen::helix::tool::caps::Host for crate::invoke::InvokeHost {}
+
+impl crate::delegate_bindgen::helix::tool::delegate::Host for crate::invoke::InvokeHost {
+    fn invoke(
+        &mut self,
+        req: crate::delegate_bindgen::helix::tool::delegate::DelegationRequest,
+    ) -> Result<
+        crate::delegate_bindgen::helix::tool::delegate::DelegationResult,
+        crate::delegate_bindgen::helix::tool::delegate::DelegateError,
+    > {
+        use crate::delegate_bindgen::helix::tool::caps as b_caps;
+        use crate::delegate_bindgen::helix::tool::delegate as b_del;
+
+        let Some(ctx) = self.delegation_ctx_mut() else {
+            return Err(b_del::DelegateError::Denied);
+        };
+
+        let tool = match req.tool {
+            b_del::ToolRef::Alias(a) => WitToolRef::Alias(a),
+            b_del::ToolRef::Digest(d) => WitToolRef::Digest(d),
+        };
+        let requested = WitCapabilitySet {
+            interfaces: req.requested.interfaces,
+            files: req
+                .requested
+                .files
+                .into_iter()
+                .map(|f| WitFileGrant {
+                    canonical_path: f.canonical_path,
+                    mode: match f.mode {
+                        b_caps::FileMode::Read => WitFileMode::Read,
+                        b_caps::FileMode::ReadWrite => WitFileMode::ReadWrite,
+                    },
+                })
+                .collect(),
+            hosts: req
+                .requested
+                .hosts
+                .into_iter()
+                .map(|h| WitHostGrant {
+                    authority: h.authority,
+                    methods: h.methods,
+                })
+                .collect(),
+        };
+        let budget = req.budget.map(|b| WitResourceBudget {
+            preempt_ticks: b.preempt_ticks,
+            wall_clock_ms: b.wall_clock_ms,
+            memory_bytes: b.memory_bytes,
+            output_bytes: b.output_bytes,
+            max_delegation_depth: b.max_delegation_depth,
+            max_children: b.max_children,
+            max_concurrent_instances: b.max_concurrent_instances,
+        });
+
+        match invoke_delegation(ctx, tool, requested, budget, req.input) {
+            Ok(Ok(success)) => Ok(b_del::DelegationResult {
+                request_id: request_id_string(success.request_id),
+                digest: success.digest.as_bytes().to_vec(),
+                output: success.output,
+                usage: b_caps::ResourceUsage {
+                    preempt_ticks: u32::try_from(success.usage.preempt_ticks).unwrap_or(u32::MAX),
+                    wall_clock_ms: u32::try_from(success.usage.wall_ms).unwrap_or(u32::MAX),
+                    memory_bytes: success.usage.peak_memory_bytes,
+                    output_bytes: u32::try_from(success.usage.output_bytes).unwrap_or(u32::MAX),
+                },
+            }),
+            Ok(Err(e)) => Err(bindgen_delegate_error(e)),
+            Err(_trap) => Err(b_del::DelegateError::Denied),
+        }
+    }
+}
+
+fn bindgen_delegate_error(
+    e: DelegateError,
+) -> crate::delegate_bindgen::helix::tool::delegate::DelegateError {
+    use crate::delegate_bindgen::helix::tool::delegate as b_del;
+    use crate::delegate_bindgen::helix::tool::types as b_types;
+    match e {
+        DelegateError::UnknownTool => b_del::DelegateError::UnknownTool,
+        DelegateError::Denied => b_del::DelegateError::Denied,
+        DelegateError::Escalation(s) => b_del::DelegateError::Escalation(s),
+        DelegateError::Depth => b_del::DelegateError::Depth,
+        DelegateError::Fanout => b_del::DelegateError::Fanout,
+        DelegateError::StaleSnapshot => b_del::DelegateError::StaleSnapshot,
+        DelegateError::InvalidInput(s) => b_del::DelegateError::InvalidInput(s),
+        DelegateError::AuditUnavailable => b_del::DelegateError::AuditUnavailable,
+        DelegateError::ChildFailed(s) => b_del::DelegateError::ChildFailed(s),
+        DelegateError::ChildKilled(k) => b_del::DelegateError::ChildKilled(match k {
+            KillCause::WallClock => b_del::KillCause::WallClock,
+            KillCause::Memory => b_del::KillCause::Memory,
+            KillCause::Output => b_del::KillCause::Output,
+            KillCause::ParentDropped => b_del::KillCause::ParentDropped,
+            KillCause::Preempted | KillCause::Panic => b_del::KillCause::Preempted,
+        }),
+        DelegateError::ChildToolError { kind, message } => {
+            let inv = match kind.as_str() {
+                "invalid-input" => b_types::InvokeError::InvalidInput(message),
+                "capability-denied" => b_types::InvokeError::CapabilityDenied(message),
+                _ => b_types::InvokeError::Internal(message),
+            };
+            b_del::DelegateError::ChildToolError(inv)
+        }
+    }
 }
 
 /// Store data that can host `helix:delegate`.

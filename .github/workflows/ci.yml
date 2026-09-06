@@ -141,6 +141,26 @@ jobs:
           echo "$wit" | grep -q 'export signature:'
           echo "$wit" | grep -q 'export invoke:'
 
+
+  sdk4-author-guide:
+    name: "SDK-4 author-guide examples e2e"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-component
+        run: cargo install cargo-component --locked --version 0.21.1
+      - name: Build guide example components
+        run: |
+          cargo component build --release --manifest-path tests/fixtures/word_count/Cargo.toml
+          cargo component build --release --manifest-path tests/fixtures/delegate_count/Cargo.toml
+          cargo component build --release --manifest-path tests/fixtures/read_b/Cargo.toml
+      - name: SDK-4 integration tests
+        run: cargo test -p helix-ctl --test sdk4_e2e -- --nocapture
+
   gw8-envelope-fuzz-smoke:
     name: GW-8 envelope fuzz smoke (30s)
     runs-on: ubuntu-latest

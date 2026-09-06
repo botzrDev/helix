@@ -153,3 +153,10 @@ world tool {
     /// `input-schema`. Output is capped at Budget.output-bytes.
     export invoke: func(input: list<u8>) -> result<list<u8>, invoke-error>;
 }
+
+// Host linker world for `helix:delegate` (HLX-39). Guests still target `world tool`.
+world delegate-host {
+    import types;
+    import caps;
+    import delegate;
+}

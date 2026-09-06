@@ -1,0 +1,26 @@
+[package]
+name = "helix-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "End-to-end load harness and result compare (HLX-40 / M7-01)"
+
+[[bin]]
+name = "helix-bench"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+helix-caps = { path = "../helix-caps" }
+helix-runtime = { path = "../helix-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+wasmtime = { workspace = true }
+
+[lints]
+workspace = true

@@ -13,6 +13,8 @@ Hardware-Enforced Logic & Interaction eXecution. A Rust-native, capability-based
 | `helix-gateway` | axum JSON-RPC gateway |
 | `helix-sdk` | Author-facing SDK |
 | `helix-ctl` | Operator CLI |
+| `helix-bench` | E2E load harness + result compare (HLX-40) |
+| `helix-benches` | Criterion BENCH-1..3 (`benches/`) |
 
 Empty crates on purpose: HLX-5 is workspace + lints + CI only.
 

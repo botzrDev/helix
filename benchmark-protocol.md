@@ -2,6 +2,12 @@
 
 Numbers in the PRD (Section 7) are estimates until this protocol replaces them. Every figure published in the README or a status update comes from this harness, on the reference hardware, with the commit hash attached.
 
+
+## 0. Status (HLX-40)
+
+Reference host **AX42-1 is not provisioned**. HLX-7 / HLX-8 are parked. This repository ships the Criterion + `helix-bench` harness, result JSON, and CI smoke for BENCH-1..3. **Do not claim BENCH-4/5 gated green on reference hardware.** D-5 numeric pin for BENCH-4 remains open. See `bench-results/hardware.json` and `benches/README.md`.
+
+
 ## 1. Reference hardware
 
 Recorded and pinned (D-2 / HLX-1, decided 2026-09-03). Change only via ADR.

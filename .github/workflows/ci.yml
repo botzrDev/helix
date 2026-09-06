@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Require forbid(unsafe_code) except helix-runtime
+      - name: Require forbid(unsafe_code) except helix-runtime; one unsafe in artifact.rs
         run: |
           set -euo pipefail
           for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-ctl; do
@@ -55,11 +55,28 @@ jobs:
             fi
           done
           if grep -R -q --include='*.rs' 'forbid(unsafe_code)' crates/helix-runtime/src; then
-            echo "helix-runtime must be allowed to use unsafe"
+            echo "helix-runtime must remain the unsafe exception (no forbid)"
+            exit 1
+          fi
+          if ! grep -q 'allow(unsafe_code)' crates/helix-runtime/src/artifact.rs; then
+            echo "helix-runtime/src/artifact.rs must have #[allow(unsafe_code)]"
+            exit 1
+          fi
+          allows=$(grep -R --include='*.rs' 'allow(unsafe_code)' crates/helix-runtime/src | wc -l)
+          if [ "$allows" -ne 1 ]; then
+            echo "expected exactly one allow(unsafe_code) in helix-runtime, found $allows"
+            exit 1
+          fi
+          # Count unsafe tokens excluding allow attribute lines and pure comments.
+          unsafes=$(grep -R --include='*.rs' -n 'unsafe' crates/helix-runtime/src | grep -v 'allow(unsafe_code)' | grep -v '^[^"]*//' | wc -l || true)
+          if [ "$unsafes" -ne 1 ]; then
+            echo "expected exactly one unsafe site in helix-runtime, found $unsafes"
+            grep -R --include='*.rs' -n 'unsafe' crates/helix-runtime/src || true
             exit 1
           fi
 
   st5-miri:
+
     name: ST-5 miri caps and audit
     runs-on: ubuntu-latest
     steps:

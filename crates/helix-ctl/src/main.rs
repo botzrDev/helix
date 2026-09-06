@@ -5,6 +5,7 @@
 
 mod audit;
 mod policy;
+mod tool;
 
 use clap::{Parser, Subcommand};
 
@@ -21,6 +22,8 @@ enum Commands {
     Policy(policy::PolicyArgs),
     /// Audit verify, dump, caps, witness-receive (M3-02 / M3-05).
     Audit(audit::AuditArgs),
+    /// Tool register / reregister-all (M4-01 / HLX-24).
+    Tool(tool::ToolArgs),
 }
 
 fn main() {
@@ -28,6 +31,7 @@ fn main() {
     let code = match cli.command {
         Commands::Policy(args) => policy::run(args),
         Commands::Audit(args) => audit::run(args),
+        Commands::Tool(args) => tool::run(args),
     };
     std::process::exit(code);
 }

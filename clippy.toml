@@ -1,5 +1,7 @@
-# ADR-003: no unconstrained tokio::spawn. Use an explicit JoinSet / runtime-owned task API.
+# ADR-003 / ADR-009 A.1 / ST-2: no unconstrained tokio::spawn.
+# The sole allowed call site is helix_runtime::spawn_cancellable
+# (#[allow(clippy::disallowed_methods)] in cancel.rs).
 disallowed-methods = [
-    "tokio::spawn",
-    "tokio::task::spawn",
+    { path = "tokio::spawn", reason = "use helix_runtime::spawn_cancellable (ST-2 / ADR-003)" },
+    { path = "tokio::task::spawn", reason = "use helix_runtime::spawn_cancellable (ST-2 / ADR-003)" },
 ]

@@ -12,7 +12,10 @@ use helix_caps::{CapabilitySet, ResourceBudget};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
 
+use tokio_util::sync::CancellationToken;
+
 use crate::bounded::{BoundedWriter, BoundedWriterError};
+use crate::cancel::{self, RequestLifecycle};
 use crate::error::{InvokeError, KillCause, RuntimeError, Usage};
 use crate::host::WasiHost;
 use crate::limits::HelixLimiter;
@@ -162,7 +165,7 @@ impl<H: TerminalHook + ?Sized> Drop for TerminalGuard<'_, H> {
     }
 }
 
-/// Store data for a capability-linked invoke: WASI host + limiter.
+/// Store data for a capability-linked invoke: WASI host + limiter + cancel token.
 pub struct InvokeHost {
     wasi: WasiHost,
     limiter: HelixLimiter,
@@ -179,7 +182,15 @@ impl std::fmt::Debug for InvokeHost {
 
 impl InvokeHost {
     fn new(caps: &CapabilitySet, memory_bytes: u64) -> Result<Self, RuntimeError> {
-        let wasi = WasiHost::from_capability_set(caps)
+        Self::new_with_token(caps, memory_bytes, CancellationToken::new())
+    }
+
+    fn new_with_token(
+        caps: &CapabilitySet,
+        memory_bytes: u64,
+        token: CancellationToken,
+    ) -> Result<Self, RuntimeError> {
+        let wasi = WasiHost::from_capability_set_with_token(caps, token)
             .map_err(|e| RuntimeError::provision(format!("filesystem grant open failed: {e}")))?;
         Ok(Self {
             wasi,
@@ -191,6 +202,12 @@ impl InvokeHost {
     #[must_use]
     pub fn limiter(&self) -> &HelixLimiter {
         &self.limiter
+    }
+
+    /// Request [`CancellationToken`] cloned into every host function (HLX-28).
+    #[must_use]
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.wasi.cancellation_token()
     }
 }
 
@@ -594,6 +611,186 @@ impl InvokeErrorPayload {
     fn message(&self) -> String {
         match self {
             Self::InvalidInput(s) | Self::CapabilityDenied(s) | Self::Internal(s) => s.clone(),
+        }
+    }
+}
+
+/// Async invoke under wall-clock cancellation (HLX-28 / L1).
+///
+/// Owns the Store inside the request future (S3). Arms `budget.wall_clock_ms`
+/// via [`RequestLifecycle`]; host functions must `select!` on the cloned token.
+/// A cancelled token while blocked in a host stub yields [`KillCause::WallClock`].
+///
+/// Child `JoinSet` scaffolding lives on [`crate::cancel::RequestLifecycle`]
+/// (filled by `helix:delegate` in HLX-31). This helper covers wall-clock on the
+/// request path; RT-8 exercises the stub host via [`crate::cancel::run_with_wall_clock`].
+pub async fn invoke_with_cancel<H: TerminalHook>(
+    engine: &Engine,
+    component: &Component,
+    caps: &CapabilitySet,
+    budget: &ResourceBudget,
+    input: &[u8],
+    hook: &mut H,
+) -> Result<InvokeSuccess, InvokeError> {
+    let started = Instant::now();
+    let mut guard = TerminalGuard::new(hook);
+
+    let mut life = RequestLifecycle::new();
+    life.arm_wall_clock(budget.wall_clock_ms());
+    let token = life.token();
+    let cancel_wait = token.clone();
+
+    // Store is a local of this future (S3).
+    let result = tokio::select! {
+        biased;
+        () = cancel_wait.cancelled() => {
+            let cause = life.kill_cause().unwrap_or(KillCause::WallClock);
+            let usage = build_usage(started, 0, 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::Killed { cause });
+            if cause == KillCause::WallClock {
+                cancel::record_wall_clock_kill();
+            }
+            Err(InvokeError::Killed { cause, usage })
+        }
+        out = async {
+            // Sync wasmtime path still runs; wall-clock races it. Host stubs
+            // that park on the token (RT-8) must use run_with_wall_clock / host_select.
+            invoke_inner_with_token(
+                engine,
+                component,
+                caps,
+                budget,
+                input,
+                started,
+                token.clone(),
+                &mut guard,
+            )
+        } => out,
+    };
+
+    life.stop_wall_timer();
+    life.disarm_parent_drop();
+    result
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn invoke_inner_with_token<H: TerminalHook>(
+    engine: &Engine,
+    component: &Component,
+    caps: &CapabilitySet,
+    budget: &ResourceBudget,
+    input: &[u8],
+    started: Instant,
+    token: CancellationToken,
+    guard: &mut TerminalGuard<'_, H>,
+) -> Result<InvokeSuccess, InvokeError> {
+    let pre = match link::provision_pre::<InvokeHost>(engine, component, caps) {
+        Ok(p) => p,
+        Err(err) => {
+            let usage = build_usage(started, 0, 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::Failed {
+                reason: err.to_string(),
+            });
+            return Err(InvokeError::Failed {
+                reason: err.to_string(),
+                usage,
+            });
+        }
+    };
+
+    let host = match InvokeHost::new_with_token(caps, budget.memory_bytes(), token) {
+        Ok(h) => h,
+        Err(err) => {
+            let usage = build_usage(started, 0, 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::Failed {
+                reason: err.to_string(),
+            });
+            return Err(InvokeError::Failed {
+                reason: err.to_string(),
+                usage,
+            });
+        }
+    };
+
+    // Store owned by this stack frame / future (S3).
+    let mut store = Store::new(engine, host);
+    store.limiter(|h| &mut h.limiter);
+    store.epoch_deadline_trap();
+    store.set_epoch_deadline(preempt_deadline_ticks(budget));
+
+    let instance = match pre.instantiate(&mut store) {
+        Ok(i) => i,
+        Err(err) => {
+            let usage = build_usage(started, store.data().limiter.peak_memory_bytes(), 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::Failed {
+                reason: err.to_string(),
+            });
+            return Err(InvokeError::Failed {
+                reason: err.to_string(),
+                usage,
+            });
+        }
+    };
+
+    let typed = match instance
+        .get_typed_func::<(Vec<u8>,), (Result<Vec<u8>, InvokeErrorPayload>,)>(&mut store, "invoke")
+    {
+        Ok(f) => f,
+        Err(err) => {
+            let usage = build_usage(started, store.data().limiter.peak_memory_bytes(), 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::Failed {
+                reason: format!("missing invoke export: {err}"),
+            });
+            return Err(InvokeError::Failed {
+                reason: format!("missing invoke export: {err}"),
+                usage,
+            });
+        }
+    };
+
+    let call = typed.call(&mut store, (input.to_vec(),));
+    let peak = store.data().limiter.peak_memory_bytes();
+
+    match call {
+        Ok((Ok(bytes),)) => {
+            let _ = typed.post_return(&mut store);
+            let usage_base = build_usage(started, peak, 0);
+            deliver_output(bytes, budget.output_bytes(), usage_base, guard)
+        }
+        Ok((Err(payload),)) => {
+            let _ = typed.post_return(&mut store);
+            let usage = build_usage(started, peak, 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::ToolError {
+                kind: payload.kind(),
+                message: payload.message(),
+            });
+            Err(InvokeError::ToolError {
+                kind: payload.kind(),
+                message: payload.message(),
+                usage,
+            })
+        }
+        Err(err) => {
+            let cause = map_trap_to_kill(&err, store.data());
+            match cause {
+                KillCause::Preempted => preempt::record_preempt_kill(),
+                KillCause::Memory => {
+                    metrics::counter!(METRIC_KILL_MEMORY).increment(1);
+                }
+                KillCause::WallClock => cancel::record_wall_clock_kill(),
+                KillCause::ParentDropped => cancel::record_parent_dropped_kill(),
+                _ => {}
+            }
+            let usage = build_usage(started, peak, 0);
+            guard.set_usage(usage);
+            guard.record(TerminalKind::Killed { cause });
+            Err(InvokeError::Killed { cause, usage })
         }
     }
 }

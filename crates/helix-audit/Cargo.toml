@@ -11,9 +11,12 @@ publish.workspace = true
 minicbor = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "macros", "fs", "io-util"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "fs", "io-util", "time"] }
 metrics = { workspace = true }
 serde_json = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "fs", "io-util", "time"] }

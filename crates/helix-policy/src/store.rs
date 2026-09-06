@@ -49,7 +49,6 @@ impl MemoryArtifactStore {
         self.runtime_max_concurrent_instances = Some(max);
         self
     }
-
 }
 
 impl ArtifactStore for MemoryArtifactStore {

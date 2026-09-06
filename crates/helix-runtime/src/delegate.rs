@@ -39,6 +39,7 @@ use crate::invoke::{
     TerminalKind,
 };
 use crate::link;
+use crate::validate::{self, Schema};
 
 /// Metric: child Stores provisioned (tests assert zero on refusal).
 pub const METRIC_CHILD_STORE_CREATED: &str = "helix_delegate_child_store_created_total";
@@ -614,30 +615,18 @@ fn wit_budget(b: &WitResourceBudget) -> ResourceBudget {
 }
 
 fn validate_input(schema: &str, input: &[u8]) -> Result<(), DelegateError> {
-    // Lightweight gate before provision: input must be JSON; when the schema
-    // declares a top-level `"type"`, require a matching JSON value kind.
-    // Full draft 2020-12 validation is a HOLE (avoid new license surface in M4).
-    let schema_v: serde_json::Value = serde_json::from_str(schema)
-        .map_err(|e| DelegateError::InvalidInput(format!("child input-schema is not JSON: {e}")))?;
-    let instance: serde_json::Value = serde_json::from_slice(input)
-        .map_err(|e| DelegateError::InvalidInput(format!("input is not JSON: {e}")))?;
-    if let Some(ty) = schema_v.get("type").and_then(serde_json::Value::as_str) {
-        let ok = match ty {
-            "object" => instance.is_object(),
-            "array" => instance.is_array(),
-            "string" => instance.is_string(),
-            "number" | "integer" => instance.is_number(),
-            "boolean" => instance.is_boolean(),
-            "null" => instance.is_null(),
-            _ => true,
+    // Shared with gateway `validate::payload` (HLX-35). PathError carries the
+    // JSON pointer; delegate surfaces it inside InvalidInput.
+    let parsed = Schema::parse(schema)
+        .map_err(|e| DelegateError::InvalidInput(format!("child input-schema invalid: {e}")))?;
+    validate::payload(&parsed, input).map_err(|e| {
+        let loc = if e.path.is_empty() {
+            e.reason.clone()
+        } else {
+            format!("{}: {}", e.path, e.reason)
         };
-        if !ok {
-            return Err(DelegateError::InvalidInput(format!(
-                "input failed child input-schema: expected type {ty}"
-            )));
-        }
-    }
-    Ok(())
+        DelegateError::InvalidInput(format!("input failed child input-schema: {loc}"))
+    })
 }
 
 fn refuse_to_delegate_error(r: DelegationRefuse) -> DelegateError {

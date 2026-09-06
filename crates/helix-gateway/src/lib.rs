@@ -6,7 +6,8 @@
 //! JWKS refresh, Bearer mode when `gateway.dpop = off`.
 //! M5-03 / HLX-34: `DPoP` RFC 9449 — HMAC nonces, challenge / `helix.nonce`,
 //! `external_url` `htu`, bounded sharded `jti` cache.
-//! Payload schema (HLX-35) and the full state machine (HLX-36) are deferred.
+//! M5-04 / HLX-35: [`validate::payload`] against registered `input-schema`
+//! (`-32602` + `data.path`); full state machine remains HLX-36.
 //!
 //! Cites: `interfaces/gateway-protocol.md` §§1–4,6; ADR-004; ADR-008 B.1/B.2;
 //! ADR-009 A.4, C.1.
@@ -21,6 +22,7 @@ mod health;
 mod request;
 mod rpc;
 mod server;
+pub mod validate;
 
 pub use auth::{
     authenticate, bind_identity, check_dpop, derive_identity, expected_htu, extract_access_token,
@@ -39,3 +41,8 @@ pub use health::HealthStatus;
 pub use request::{Request, RequestBuildError};
 pub use rpc::{error as rpc_error, invalid_request, success as rpc_success, RpcCode, RpcId};
 pub use server::{router, GatewayRuntime, GatewayState};
+pub use validate::{
+    fuzz_payload_validator, invalid_params as invalid_params_path, payload as validate_payload,
+    registry_from_signatures, PathError as PayloadPathError, Schema as PayloadSchema,
+    SchemaRegistry,
+};

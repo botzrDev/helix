@@ -1,8 +1,8 @@
 //! Bind `sub` / `cnf.jkt` / optional proof-key thumbprint into [`Identity`].
 //!
-//! M5-02 / HLX-33: `sub == cnf.jkt == derive_identity(proof)` when a proof key
-//! is supplied. The `DPoP` proof-key path is the hook for HLX-34; Bearer mode
-//! passes `proof_key = None` and only checks `sub == cnf.jkt`.
+//! M5-02 / HLX-33 + M5-03 / HLX-34: `sub == cnf.jkt == derive_identity(proof)`
+//! when a proof key is supplied. Bearer mode (`dpop = off`) passes
+//! `proof_key = None` and only checks `sub == cnf.jkt`.
 
 use helix_caps::Identity;
 

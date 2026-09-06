@@ -15,6 +15,7 @@ bytes = { workspace = true }
 helix-caps = { path = "../helix-caps" }
 helix-policy = { path = "../helix-policy" }
 helix-audit = { path = "../helix-audit" }
+hmac = { workspace = true }
 jsonwebtoken = { workspace = true }
 log = { workspace = true }
 metrics = { workspace = true }
@@ -26,9 +27,15 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "time"] }
 
 [dev-dependencies]
+base64 = { workspace = true }
+hmac = { workspace = true }
 helix-policy = { path = "../helix-policy" }
+jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = "3"
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "net", "time"] }
 
 [lints]

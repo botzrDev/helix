@@ -3,6 +3,7 @@
 //! Cites: runbook §2, ADR-008 B.2 / F.4, `interfaces/gateway-protocol.md` §1.
 
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -32,17 +33,15 @@ impl FromStr for HealthDetail {
 }
 
 /// `gateway.dpop`: `required` | `optional` | `off`.
-///
-/// Bearer extraction when `off`; `DPoP` proof validation is HLX-34.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DpopMode {
-    /// `Authorization: DPoP <token>` + `DPoP` proof required (HLX-34).
+    /// `Authorization: DPoP <token>` + `DPoP` proof required.
     #[default]
     Required,
     /// Accept `DPoP` or Bearer.
     Optional,
-    /// `Authorization: Bearer <token>` only (this ticket's primary path).
+    /// `Authorization: Bearer <token>` only.
     Off,
 }
 
@@ -123,6 +122,11 @@ impl FromStr for TrustedProxy {
     }
 }
 
+/// Default total `jti` cache entries (runbook §2).
+pub const DEFAULT_DPOP_JTI_MAX_ENTRIES: usize = 1_048_576;
+/// Default nonce / jti window seconds.
+pub const DEFAULT_DPOP_TTL_S: u64 = 60;
+
 /// `[gateway]` section used by the axum server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatewayConfig {
@@ -130,7 +134,7 @@ pub struct GatewayConfig {
     pub listen: SocketAddr,
     /// CIDRs trusted for `X-Forwarded-*` logging only (ADR-008 B.2).
     pub trusted_proxies: Vec<TrustedProxy>,
-    /// Public URL base for `DPoP` `htu` (required by protocol; unused until HLX-34).
+    /// Public URL base for `DPoP` `htu` (required).
     pub external_url: String,
     /// `helix.health` detail level.
     pub health_detail: HealthDetail,
@@ -144,6 +148,16 @@ pub struct GatewayConfig {
     pub jwks_refresh_s: u64,
     /// Expected JWT `aud`.
     pub audience: String,
+    /// Path to 32-byte `nonce_key` file (mode 0600).
+    pub nonce_key: Option<PathBuf>,
+    /// Optional rotation key path (`nonce_key_next`).
+    pub nonce_key_next: Option<PathBuf>,
+    /// HMAC nonce bucket TTL seconds.
+    pub dpop_nonce_ttl_s: u64,
+    /// `jti` replay window seconds.
+    pub dpop_jti_window_s: u64,
+    /// Total `jti` cache capacity (split across 64 shards).
+    pub dpop_jti_max_entries: usize,
 }
 
 impl Default for GatewayConfig {
@@ -158,6 +172,11 @@ impl Default for GatewayConfig {
             jwks_url: "https://<host>/realms/helix/protocol/openid-connect/certs".to_owned(),
             jwks_refresh_s: 300,
             audience: "helix".to_owned(),
+            nonce_key: None,
+            nonce_key_next: None,
+            dpop_nonce_ttl_s: DEFAULT_DPOP_TTL_S,
+            dpop_jti_window_s: DEFAULT_DPOP_TTL_S,
+            dpop_jti_max_entries: DEFAULT_DPOP_JTI_MAX_ENTRIES,
         }
     }
 }
@@ -207,6 +226,7 @@ mod tests {
     #[test]
     fn dpop_mode_parse() {
         assert_eq!("off".parse::<DpopMode>().unwrap(), DpopMode::Off);
+        assert_eq!("required".parse::<DpopMode>().unwrap(), DpopMode::Required);
         assert!("maybe".parse::<DpopMode>().is_err());
     }
 }

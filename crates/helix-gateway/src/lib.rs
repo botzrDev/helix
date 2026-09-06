@@ -4,11 +4,12 @@
 //! and the `Request { id, identity, tool, payload, snapshot }` admission type.
 //! M5-02 / HLX-33: `EdDSA`-only JWT verification, RFC 7638 thumbprint identity,
 //! JWKS refresh, Bearer mode when `gateway.dpop = off`.
-//! `DPoP` (HLX-34), payload schema (HLX-35), and the full state machine
-//! (HLX-36) are deferred.
+//! M5-03 / HLX-34: `DPoP` RFC 9449 — HMAC nonces, challenge / `helix.nonce`,
+//! `external_url` `htu`, bounded sharded `jti` cache.
+//! Payload schema (HLX-35) and the full state machine (HLX-36) are deferred.
 //!
-//! Cites: `interfaces/gateway-protocol.md` §§1–4,6; ADR-004; ADR-008 B.1;
-//! ADR-009 A.4.
+//! Cites: `interfaces/gateway-protocol.md` §§1–4,6; ADR-004; ADR-008 B.1/B.2;
+//! ADR-009 A.4, C.1.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -22,12 +23,17 @@ mod rpc;
 mod server;
 
 pub use auth::{
-    authenticate, bind_identity, derive_identity, extract_access_token, identity_from_jkt,
-    identity_to_jkt, verify_token, AccessClaims, AuthError, AuthReason, CnfClaim, Ed25519PublicJwk,
-    ExtractedToken, JwksCache, JwksSnapshot, VerificationKeys, VerifiedAccessToken, VerifyParams,
-    METRIC_AUTH_FAILED,
+    authenticate, bind_identity, check_dpop, derive_identity, expected_htu, extract_access_token,
+    fuzz_dpop_proof, identity_from_jkt, identity_to_jkt, issue_nonce, load_nonce_key_file,
+    nonce_acceptable, verify_dpop_proof, verify_token, AccessClaims, AuthError, AuthReason,
+    CnfClaim, DpopCheck, DpopRuntime, Ed25519PublicJwk, ExtractedToken, JtiCache, JwksCache,
+    JwksSnapshot, NonceKeys, VerificationKeys, VerifiedAccessToken, VerifiedDpopProof,
+    VerifyParams, METRIC_AUTH_FAILED, METRIC_JTI_ENTRIES, METRIC_JTI_FULL,
 };
-pub use config::{ConfigError, DpopMode, GatewayConfig, HealthDetail, TrustedProxy};
+pub use config::{
+    ConfigError, DpopMode, GatewayConfig, HealthDetail, TrustedProxy, DEFAULT_DPOP_JTI_MAX_ENTRIES,
+    DEFAULT_DPOP_TTL_S,
+};
 pub use envelope::{parse_envelope, parse_envelope_value, EnvelopeOutcome, ParsedRequest};
 pub use health::HealthStatus;
 pub use request::{Request, RequestBuildError};

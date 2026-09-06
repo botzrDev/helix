@@ -8,16 +8,22 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+arc-swap = { workspace = true }
 axum = { workspace = true, features = ["http1", "http2", "json", "tokio"] }
+base64 = { workspace = true }
 bytes = { workspace = true }
 helix-caps = { path = "../helix-caps" }
 helix-policy = { path = "../helix-policy" }
 helix-audit = { path = "../helix-audit" }
+jsonwebtoken = { workspace = true }
+log = { workspace = true }
+metrics = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "time"] }
-log = { workspace = true }
 
 [dev-dependencies]
 helix-policy = { path = "../helix-policy" }

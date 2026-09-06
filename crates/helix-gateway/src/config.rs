@@ -31,6 +31,34 @@ impl FromStr for HealthDetail {
     }
 }
 
+/// `gateway.dpop`: `required` | `optional` | `off`.
+///
+/// Bearer extraction when `off`; `DPoP` proof validation is HLX-34.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DpopMode {
+    /// `Authorization: DPoP <token>` + `DPoP` proof required (HLX-34).
+    #[default]
+    Required,
+    /// Accept `DPoP` or Bearer.
+    Optional,
+    /// `Authorization: Bearer <token>` only (this ticket's primary path).
+    Off,
+}
+
+impl FromStr for DpopMode {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "required" => Ok(Self::Required),
+            "optional" => Ok(Self::Optional),
+            "off" => Ok(Self::Off),
+            other => Err(ConfigError::BadDpopMode(other.to_owned())),
+        }
+    }
+}
+
 /// An IPv4 or IPv6 CIDR used only for source-address / logging (never `DPoP`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrustedProxy {
@@ -95,10 +123,7 @@ impl FromStr for TrustedProxy {
     }
 }
 
-/// `[gateway]` section used by the axum server (M5-01).
-///
-/// Auth / `DPoP` fields land in HLX-33 / HLX-34; this ticket owns `listen`,
-/// `trusted_proxies`, `health_detail`, and `external_url` (for later htu).
+/// `[gateway]` section used by the axum server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatewayConfig {
     /// Bind address (`gateway.listen`).
@@ -109,6 +134,16 @@ pub struct GatewayConfig {
     pub external_url: String,
     /// `helix.health` detail level.
     pub health_detail: HealthDetail,
+    /// `DPoP` enforcement mode.
+    pub dpop: DpopMode,
+    /// Token issuer URL (Keycloak placeholder until the box exists).
+    pub issuer: String,
+    /// JWKS URL refreshed every [`Self::jwks_refresh_s`].
+    pub jwks_url: String,
+    /// JWKS refresh interval in seconds (runbook §7).
+    pub jwks_refresh_s: u64,
+    /// Expected JWT `aud`.
+    pub audience: String,
 }
 
 impl Default for GatewayConfig {
@@ -118,6 +153,11 @@ impl Default for GatewayConfig {
             trusted_proxies: Vec::new(),
             external_url: "http://127.0.0.1:8080".to_owned(),
             health_detail: HealthDetail::Minimal,
+            dpop: DpopMode::Off,
+            issuer: "https://<host>/realms/helix".to_owned(),
+            jwks_url: "https://<host>/realms/helix/protocol/openid-connect/certs".to_owned(),
+            jwks_refresh_s: 300,
+            audience: "helix".to_owned(),
         }
     }
 }
@@ -136,6 +176,9 @@ pub enum ConfigError {
     /// `gateway.health_detail` was not `minimal` or `full`.
     #[error("gateway.health_detail must be minimal|full, got {0}")]
     BadHealthDetail(String),
+    /// `gateway.dpop` was not `required|optional|off`.
+    #[error("gateway.dpop must be required|optional|off, got {0}")]
+    BadDpopMode(String),
     /// A `trusted_proxies` entry was not a CIDR.
     #[error("gateway.trusted_proxies entry is not a CIDR: {0}")]
     BadCidr(String),
@@ -159,5 +202,11 @@ mod tests {
     fn health_detail_parse() {
         assert_eq!("full".parse::<HealthDetail>().unwrap(), HealthDetail::Full);
         assert!("nope".parse::<HealthDetail>().is_err());
+    }
+
+    #[test]
+    fn dpop_mode_parse() {
+        assert_eq!("off".parse::<DpopMode>().unwrap(), DpopMode::Off);
+        assert!("maybe".parse::<DpopMode>().is_err());
     }
 }

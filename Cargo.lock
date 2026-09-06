@@ -1071,6 +1071,19 @@ dependencies = [
 [[package]]
 name = "helix-gateway"
 version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "helix-audit",
+ "helix-caps",
+ "helix-policy",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
 
 [[package]]
 name = "helix-policy"

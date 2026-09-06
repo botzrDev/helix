@@ -109,3 +109,25 @@ jobs:
         run: cargo install cargo-component --locked --version 0.21.1
       - name: Build hello-world component
         run: cargo component build --release --manifest-path tests/fixtures/hello-world/Cargo.toml
+
+  gw8-envelope-fuzz-smoke:
+    name: GW-8 envelope fuzz smoke (30s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install C++ toolchain for libFuzzer
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/helix-gateway/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Smoke-run envelope fuzz target
+        working-directory: crates/helix-gateway
+        # Full GW-8 gate is `cargo fuzz run envelope -- -max_total_time=600` (10 min)
+        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # This smoke keeps the target compiling and free of immediate panics.
+        run: cargo +nightly fuzz run envelope -- -max_total_time=30

@@ -5,3 +5,8 @@
 *.swp
 tests/fixtures/hello-world/target/
 tests/fixtures/hello-world/src/bindings.rs
+
+# cargo-fuzz
+**/fuzz/target/
+**/fuzz/corpus/
+**/fuzz/artifacts/

@@ -1,4 +1,7 @@
 # Gateway adversarial fixtures (M5-06 / HLX-37)
 
-Runtime-owned fixtures remain under `../runtime/` and `../` (spin, membomb, trivial).
-This directory holds gateway-namespace cases when HLX-37 lands.
+Gateway-namespace assertions live in `crates/helix-gateway/tests/adversarial_gateway.rs`
+(batch envelope, `alg:none`, replayed DPoP proof, concurrency flood, kill e2e).
+
+This directory holds optional host-side corpora; runtime-owned wasm remains under
+`../runtime/` and `../`.

@@ -102,6 +102,56 @@ pub fn http_import_wasm() -> PathBuf {
         .join("../../tests/fixtures/http-import/http_import.wasm")
 }
 
+pub fn adversarial_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/adversarial")
+        .join(name)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn load_holder_budget(
+    digest_hex: &str,
+    tool_alias: &str,
+    jkt: &str,
+    max_concurrent: u32,
+    interfaces: &str,
+    preempt_ticks: u32,
+    wall_clock_ms: u32,
+    memory_bytes: u64,
+    output_bytes: u32,
+) -> PolicyHolder {
+    let digest = parse_tool_digest(tool_alias, digest_hex).unwrap();
+    let store = MemoryArtifactStore::new()
+        .with_digest(digest)
+        .with_runtime_max(256);
+    let toml = format!(
+        r#"
+version = 1
+
+[tools]
+{tool_alias} = "{digest_hex}"
+
+[budgets.default]
+preempt_ticks = {preempt_ticks}
+wall_clock_ms = {wall_clock_ms}
+memory_bytes = {memory_bytes}
+output_bytes = {output_bytes}
+max_concurrent_instances = {max_concurrent}
+
+[identities]
+agent = "{jkt}"
+
+[[grants]]
+identity = "agent"
+tool = "{tool_alias}"
+digest = "{digest_hex}"
+interfaces = [{interfaces}]
+budget = "default"
+"#
+    );
+    PolicyHolder::load(&toml, &store, &MapFs::new(), DEFAULT_MAX_SNAPSHOT_AGE_S).expect("policy")
+}
+
 pub fn load_holder_with(
     digest_hex: &str,
     tool_alias: &str,

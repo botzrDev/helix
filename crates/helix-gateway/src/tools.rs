@@ -8,8 +8,11 @@ use std::sync::{Arc, RwLock};
 use helix_caps::ToolDigest;
 use helix_runtime::signature::ToolSignatureRecord;
 use helix_runtime::{
-    build_engine, digest_of_bytes, RuntimeConfig, RuntimeError, ToolSignatureInfo,
+    build_engine, digest_of_bytes, RuntimeConfig, RuntimeError, ToolSignatureInfo, EPOCH_TICK_MS,
 };
+use std::sync::atomic::AtomicBool;
+use std::thread::JoinHandle;
+use std::time::Duration;
 use tokio::sync::Notify;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
@@ -25,9 +28,51 @@ pub struct LoadedTool {
     pub signature: ToolSignatureInfo,
 }
 
+/// Keeps the 1 ms epoch ticker alive for the lifetime of [`ToolRuntime`].
+///
+/// [`EpochTicker`]'s `JoinHandle` is `Send` but not `Sync`; wrap join in a mutex
+/// so `ToolRuntime` can live behind `Arc` (gateway state).
+struct EpochTickerGuard {
+    stop: Arc<AtomicBool>,
+    join: std::sync::Mutex<Option<JoinHandle<()>>>,
+}
+
+impl EpochTickerGuard {
+    fn start(engine: Engine) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let join = std::thread::Builder::new()
+            .name("helix-epoch-ticker".into())
+            .spawn(move || {
+                while !flag.load(Ordering::Relaxed) {
+                    engine.increment_epoch();
+                    std::thread::sleep(Duration::from_millis(EPOCH_TICK_MS));
+                }
+            })
+            .expect("spawn helix-epoch-ticker");
+        Self {
+            stop,
+            join: std::sync::Mutex::new(Some(join)),
+        }
+    }
+}
+
+impl Drop for EpochTickerGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Ok(mut g) = self.join.lock() {
+            if let Some(j) = g.take() {
+                let _ = j.join();
+            }
+        }
+    }
+}
+
 /// Runtime handle held by the gateway: engine + tools + optional test latch.
 pub struct ToolRuntime {
     engine: Engine,
+    /// Advances wasmtime epoch every 1 ms (ADR-009 E.1) for preempt kills.
+    _epoch_ticker: EpochTickerGuard,
     tools: RwLock<HashMap<ToolDigest, LoadedTool>>,
     /// When set, invoke waits after Granted until `notify_waiters` (GW-15).
     pub hold: Option<Arc<Notify>>,
@@ -45,8 +90,10 @@ impl ToolRuntime {
         let dir = artifact_dir.into();
         let cfg = RuntimeConfig::for_test(&dir);
         let engine = build_engine(&cfg)?;
+        let ticker = EpochTickerGuard::start(engine.clone());
         Ok(Self {
             engine,
+            _epoch_ticker: ticker,
             tools: RwLock::new(HashMap::new()),
             hold: None,
             instantiate_count: AtomicU64::new(0),

@@ -57,7 +57,7 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 |---|---|---|
 | E1 | `cargo deny` advisories clean at release commit | [ ] |
 | E2 | Nightly fuzz has run ≥ 7 consecutive nights with no new crashes | [ ] |
-| E3 | Adversarial suite passes at release commit | [ ] |
+| E3 | Adversarial suite passes at release commit | [x] |
 | E4 | Runbook incident table validated by an operator who did not write it | [ ] |
 | E5 | Residual risks listed below reviewed and accepted | [ ] |
 

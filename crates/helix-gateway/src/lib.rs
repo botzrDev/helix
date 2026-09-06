@@ -18,9 +18,10 @@
 //!   params is stubbed (`pipeline::refuse_root_delegation`); root HTTP requests
 //!   do not carry child tree bounds on the wire (ADR-009 A.4). Covered in-process
 //!   by `runtime::delegate` (RT-13/14).
-//! - Adversarial kill paths (`-32010`…`-32014`) through the gateway require
-//!   registered adversarial fixtures; unit coverage is in helix-runtime. GW-7
-//!   exercises them when artifacts are registered.
+//! - Adversarial kill paths (`-32010`…`-32013`) through the gateway: HLX-37
+//!   suite in `tests/adversarial/` (gateway e2e + runtime namespace). Escalate /
+//!   fanout / slowhost guest-through-gateway remain runtime-owned where
+//!   `helix:delegate` / HTTP guest linking is not yet wired on the root path.
 //! - `Caps` dual-hash on escalation records (RT-13) still deferred (record key 7
 //!   is singular).
 //! - Full Draft 2020-12 schema keywords: see `helix_policy::input_schema` HOLE.

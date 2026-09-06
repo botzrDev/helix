@@ -158,6 +158,8 @@ pub struct GatewayConfig {
     pub dpop_jti_window_s: u64,
     /// Total `jti` cache capacity (split across 64 shards).
     pub dpop_jti_max_entries: usize,
+    /// When true, `-32002` includes requested/available caps (ADR-008 F.4).
+    pub verbose_denials: bool,
 }
 
 impl Default for GatewayConfig {
@@ -177,6 +179,7 @@ impl Default for GatewayConfig {
             dpop_nonce_ttl_s: DEFAULT_DPOP_TTL_S,
             dpop_jti_window_s: DEFAULT_DPOP_TTL_S,
             dpop_jti_max_entries: DEFAULT_DPOP_JTI_MAX_ENTRIES,
+            verbose_denials: false,
         }
     }
 }
@@ -186,6 +189,13 @@ impl GatewayConfig {
     #[must_use]
     pub fn peer_is_trusted(&self, peer: IpAddr) -> bool {
         self.trusted_proxies.iter().any(|c| c.contains(peer))
+    }
+
+    /// Log `gateway.verbose_denials.enabled` at warn when the flag is set.
+    pub fn warn_verbose_denials(&self) {
+        if self.verbose_denials {
+            log::warn!(target: "helix_gateway", "gateway.verbose_denials.enabled");
+        }
     }
 }
 

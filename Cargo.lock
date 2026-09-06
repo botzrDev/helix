@@ -1086,6 +1086,7 @@ dependencies = [
  "helix-audit",
  "helix-caps",
  "helix-policy",
+ "helix-runtime",
  "hmac",
  "jsonwebtoken",
  "log",
@@ -1097,6 +1098,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "wasmtime",
 ]
 
 [[package]]

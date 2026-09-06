@@ -2,7 +2,7 @@
 //!
 //! GW-6: batch JSON-RPC array produces `-32600`.
 //! Also covers parse error `-32700`, unknown method `-32601`, health detail,
-//! and the `Request` seam via `helix.invoke` → `-32004 not_wired`.
+//! and the `Request` seam via `helix.invoke` → pipeline (`-32004` provision when unwired).
 
 use std::net::SocketAddr;
 

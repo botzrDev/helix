@@ -15,3 +15,8 @@ fixture is not required for the channel bound.
 BENCH-8 (p99 ≤ 12 ms at `preempt_ticks = 10`) is deferred to M7-01 / informational.
 BENCH-7 (RSS after 100,000 at c=64) is deferred to M7-01; RT-10 covers the
 10,000 sequential zero-leak gate.
+
+## Split (HLX-31)
+
+- `runtime/` — escalate / fanout / child_echo / slow_child (RT-13…RT-16)
+- `gateway/` — reserved for M5-06 / HLX-37

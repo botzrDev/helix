@@ -12,11 +12,11 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | A3b | DPoP `jti` replay refused within one process; bounded cache | `auth::dpop::JtiCache` | GW-3, GW-14 | [ ] |
 | A4 | Payload validated against tool schema before instantiation | `validate::payload` | GW-5, GW-10 | [ ] |
 | A5 | Policy lookup is exact-match; no wildcards | `helix-policy::lookup` | POL-3 | [ ] |
-| A6 | Delegation cannot escalate | `runtime::delegate`, `helix-caps::attenuate` | CAPS-4, CAPS-5, POL-6, RT-13 | [ ] |
+| A6 | Delegation cannot escalate | `runtime::delegate`, `helix-caps::attenuate` | CAPS-4, CAPS-5, POL-6, RT-13 | [x] |
 | A7 | Output bounded | `runtime::BoundedWriter` | RT-7 | [x] |
 | A8 | Denial reasons do not leak policy contents unless `verbose_denials` | `gateway::error_map` | GW-7 | [ ] |
 | A9 | Ingress rate limiting covers **external** requests only; internally generated calls are bounded by A10 (ADR-008 A.4) | runbook section 1 | n/a | [ ] |
-| A10 | Resource exhaustion by an authorized caller through delegation: depth and fan-out enforced in `runtime::delegate`; per-identity cap at Authorized via `runtime::admission::IdentitySemaphore` (semaphore type owned by the runtime; HLX-31) | `runtime::delegate`, `runtime::admission` | RT-14, GW-15 | [ ] |
+| A10 | Resource exhaustion by an authorized caller through delegation: depth and fan-out enforced in `runtime::delegate`; per-identity cap at Authorized via `runtime::admission::IdentitySemaphore` (semaphore type owned by the runtime; HLX-31) | `runtime::delegate`, `runtime::admission` | RT-14, GW-15 | [x] (RT-14; GW-15 pending M5) |
 | A11 | Tool signatures visible only to granted identities (`helix.describe` grant check) | `gateway::describe` | GW-16 | [ ] |
 
 ## B. Malicious or replaced tool component

@@ -1,5 +1,6 @@
-//! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool, and
-//! bit-driven capability linking (M4-01 / HLX-24, M4-02 / HLX-25).
+//! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
+//! bit-driven capability linking, and filesystem grants
+//! (M4-01 / HLX-24, M4-02 / HLX-25, M4-03 / HLX-26).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -8,6 +9,10 @@
 //! [`helix_caps::CapabilitySet`] into a wasmtime [`wasmtime::component::Linker`].
 //! Interfaces whose bit is clear are not added; unlinked imports fail at
 //! provision with [`error::RuntimeError::Provision`] (`-32004`).
+//!
+//! **Filesystem grants (HLX-26):** [`fs`] opens each `FileGrant` / `DirGrant`
+//! with `O_NOFOLLOW` and installs cap-std preopens on [`host::WasiHost`]. Host
+//! path strings never cross into the guest.
 //!
 //! **Registration linker template (HLX-24):** `InstancePre` values used for
 //! `signature` at register/load are still built with
@@ -25,6 +30,7 @@ pub mod artifact;
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod fs;
 pub mod host;
 pub mod link;
 pub mod pool;
@@ -38,6 +44,10 @@ pub use artifact::{
 pub use config::RuntimeConfig;
 pub use engine::build_engine;
 pub use error::RuntimeError;
+pub use fs::{
+    apply_filesystem_grants, guest_preopen_name, open_dir_nofollow, open_file_nofollow,
+    FileGrantStages, FsGrantError,
+};
 pub use host::WasiHost;
 pub use link::{link, link_with_names, linked_names, provision_pre};
 pub use pool::{InstancePool, PooledPre};

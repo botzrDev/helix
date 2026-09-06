@@ -15,9 +15,10 @@
 //! - `wasi:cli/environment` — no `Interface::Environment` (ADR-008 A.5).
 //! - `wasi:sockets/*` — never added (`unlinked.wasm` fixtures).
 //!
-//! # Stubbed shapes
+//! # Host shapes
 //!
-//! - **Filesystem** (bit set): empty wasmtime-wasi preopens/types (HLX-26).
+//! - **Filesystem** (bit set): `wasi:filesystem` linked; preopens installed by
+//!   [`crate::host::WasiHost::from_capability_set`] (HLX-26 / cap-std, `O_NOFOLLOW`).
 //! - **HTTP outbound** (bit set): trap stub for `outgoing-handler` (HLX-30).
 
 use helix_caps::{CapabilitySet, Interface};
@@ -158,7 +159,7 @@ pub fn link_with_names<T: WasiView>(
         add_random(&mut linker)?;
     }
     if caps.has(Interface::Filesystem) {
-        add_filesystem_stub(&mut linker)?;
+        add_filesystem(&mut linker)?;
     }
     if caps.has(Interface::HttpOutbound) {
         add_http_stub(&mut linker)?;
@@ -229,11 +230,11 @@ fn add_random<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn add_filesystem_stub<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {
+fn add_filesystem<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {
     filesystem::preopens::add_to_linker::<T, HelixWasi>(linker, T::ctx)
-        .map_err(|e| RuntimeError::provision(format!("link filesystem/preopens stub: {e}")))?;
+        .map_err(|e| RuntimeError::provision(format!("link filesystem/preopens: {e}")))?;
     sync::filesystem::types::add_to_linker::<T, HelixWasi>(linker, T::ctx)
-        .map_err(|e| RuntimeError::provision(format!("link filesystem/types stub: {e}")))?;
+        .map_err(|e| RuntimeError::provision(format!("link filesystem/types: {e}")))?;
     Ok(())
 }
 

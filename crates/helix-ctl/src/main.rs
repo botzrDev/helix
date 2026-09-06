@@ -19,7 +19,7 @@ struct Cli {
 enum Commands {
     /// Policy check, explain, and reload (M2-04 / HLX-17).
     Policy(policy::PolicyArgs),
-    /// Audit verify, dump, and caps (M3-02 / HLX-19).
+    /// Audit verify, dump, caps, witness-receive (M3-02 / M3-05).
     Audit(audit::AuditArgs),
 }
 

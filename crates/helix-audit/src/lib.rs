@@ -8,6 +8,8 @@
 //! Caps side-file store (M3-04 / HLX-21): content-addressed
 //! `caps/<hex>.cbor` via [`caps::CapsStore`]. Verify checks presence and that
 //! `sha256(side file) == caps_hash`.
+//!
+//! Witness emission + S3-style sink (M3-05 / HLX-22, ADR-008 D.4 / ADR-009 D.2).
 
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
@@ -23,6 +25,10 @@ pub mod record;
 pub mod retention;
 pub mod tags;
 pub mod verify;
+pub mod witness;
+pub mod witness_receive;
+pub mod witness_sink;
+pub mod witness_verify;
 pub mod writer;
 
 pub use caps::{
@@ -48,6 +54,13 @@ pub use tags::{GENESIS_PREV_HASH, HEADER_VERSION, REASON_MAX_BYTES, RECORD_VERSI
 pub use verify::{
     verify_dir, verify_file, DirFileReport, DirVerifyReport, VerifyError, VerifyReport,
 };
+pub use witness::{retention_object_key, witness_object_key, SinkPayload, Witness, WitnessError};
+pub use witness_receive::{load_token_file, WitnessReceiveRuntime};
+pub use witness_sink::{
+    NoopExportSink, SigV4Creds, SinkError, WitnessAuth, WitnessConfig, WitnessHandle,
+    WitnessHttpClient, WitnessRuntime,
+};
+pub use witness_verify::{verify_dir_with_witnesses, WitnessVerifyError, WitnessVerifyReport};
 pub use writer::{
     default_ulid_source, AuditWriter, AuditWriterRuntime, UlidSource, WriteReceipt, WriterError,
 };

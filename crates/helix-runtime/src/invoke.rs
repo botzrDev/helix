@@ -492,11 +492,36 @@ pub fn invoke<H: TerminalHook>(
     input: &[u8],
     hook: &mut H,
 ) -> Result<InvokeSuccess, InvokeError> {
+    invoke_with_delegation(engine, component, caps, budget, input, None, hook)
+}
+
+/// Like [`invoke`], but links `helix:delegate` and optionally attaches a
+/// [`crate::delegate::DelegationCtx`] (HLX-39 local / example run path).
+///
+/// Root invoke historically used [`link::provision_pre`] without delegate; SDK
+/// tools that import `helix:tool/delegate` failed at provision. This path always
+/// binds the import; when `delegation` is `None`, guest `delegate/invoke` calls
+/// receive `delegate-error::denied`.
+///
+/// # Errors
+///
+/// Provision, kill, or tool-error outcomes as [`InvokeError`].
+pub fn invoke_with_delegation<H: TerminalHook>(
+    engine: &Engine,
+    component: &Component,
+    caps: &CapabilitySet,
+    budget: &ResourceBudget,
+    input: &[u8],
+    delegation: Option<crate::delegate::DelegationCtx>,
+    hook: &mut H,
+) -> Result<InvokeSuccess, InvokeError> {
     let started = Instant::now();
     let mut guard = TerminalGuard::new(hook);
 
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
-        invoke_inner(engine, component, caps, budget, input, started, &mut guard)
+        invoke_inner(
+            engine, component, caps, budget, input, started, delegation, &mut guard,
+        )
     }));
 
     match result {
@@ -515,6 +540,7 @@ pub fn invoke<H: TerminalHook>(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn invoke_inner<H: TerminalHook>(
     engine: &Engine,
     component: &Component,
@@ -522,9 +548,10 @@ fn invoke_inner<H: TerminalHook>(
     budget: &ResourceBudget,
     input: &[u8],
     started: Instant,
+    delegation: Option<crate::delegate::DelegationCtx>,
     guard: &mut TerminalGuard<'_, H>,
 ) -> Result<InvokeSuccess, InvokeError> {
-    let pre = match link::provision_pre::<InvokeHost>(engine, component, caps) {
+    let pre = match link::provision_pre_with_delegate::<InvokeHost>(engine, component, caps) {
         Ok(p) => p,
         Err(err) => {
             let usage = build_usage(started, 0, 0);
@@ -539,7 +566,7 @@ fn invoke_inner<H: TerminalHook>(
         }
     };
 
-    let host = match InvokeHost::new(caps, budget.memory_bytes()) {
+    let mut host = match InvokeHost::new(caps, budget.memory_bytes()) {
         Ok(h) => h,
         Err(err) => {
             let usage = build_usage(started, 0, 0);
@@ -553,6 +580,9 @@ fn invoke_inner<H: TerminalHook>(
             });
         }
     };
+    if let Some(ctx) = delegation {
+        host.set_delegation(ctx);
+    }
 
     let mut store = Store::new(engine, host);
     store.limiter(|h| &mut h.limiter);
@@ -735,7 +765,7 @@ fn invoke_inner_with_token<H: TerminalHook>(
     token: CancellationToken,
     guard: &mut TerminalGuard<'_, H>,
 ) -> Result<InvokeSuccess, InvokeError> {
-    let pre = match link::provision_pre::<InvokeHost>(engine, component, caps) {
+    let pre = match link::provision_pre_with_delegate::<InvokeHost>(engine, component, caps) {
         Ok(p) => p,
         Err(err) => {
             let usage = build_usage(started, 0, 0);

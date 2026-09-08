@@ -9,11 +9,25 @@ publish.workspace = true
 
 [dependencies]
 clap = { workspace = true }
+helix-caps = { path = "../helix-caps" }
 helix-policy = { path = "../helix-policy" }
 helix-audit = { path = "../helix-audit" }
 helix-runtime = { path = "../helix-runtime" }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "fs", "signal"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+wasmtime = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+helix-caps = { path = "../helix-caps" }
+helix-policy = { path = "../helix-policy" }
+helix-runtime = { path = "../helix-runtime" }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+wasmtime = { workspace = true }
 
 [lints]
 workspace = true

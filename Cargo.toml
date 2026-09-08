@@ -7,6 +7,8 @@ members = [
     "crates/helix-gateway",
     "crates/helix-audit",
     "crates/helix-sdk",
+    "crates/helix-sdk-macro",
+    "crates/helix-sdk-wit",
     "crates/helix-ctl",
 ]
 
@@ -51,6 +53,9 @@ hmac = "0.12"
 url = "2"
 httpdate = "1"
 jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+schemars = { version = "1.2", features = ["derive"] }
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+trybuild = "1.0"
 
 [workspace.lints.rust]
 unexpected_cfgs = "warn"

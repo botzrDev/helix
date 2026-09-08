@@ -1,10 +1,10 @@
 //! JSON-RPC 2.0 response helpers and standard error codes.
 //!
-//! Cites: `interfaces/gateway-protocol.md` §4.
+//! Cites: `interfaces/gateway-protocol.md` §4; `interfaces/state-machine.md`.
 
 use serde_json::{json, Value};
 
-/// JSON-RPC 2.0 error codes used by the gateway envelope.
+/// JSON-RPC 2.0 error codes used by the gateway.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 pub enum RpcCode {
@@ -16,14 +16,34 @@ pub enum RpcCode {
     MethodNotFound = -32601,
     /// Invalid params.
     InvalidParams = -32602,
-    /// Auth failure (HLX-33 / HLX-34).
+    /// Auth failure.
     Unauthenticated = -32001,
-    /// Policy denial.
+    /// Policy denial / concurrency.
     Denied = -32002,
     /// Unknown / ungranted tool.
     UnknownTool = -32003,
-    /// Provision failed / pipeline not wired.
+    /// Provision failed.
     ProvisionFailed = -32004,
+    /// Tool error: invalid input.
+    ToolInvalidInput = -32005,
+    /// Tool error: capability denied.
+    ToolCapabilityDenied = -32006,
+    /// Tool error: internal / host panic.
+    ToolInternal = -32007,
+    /// Killed: preempted.
+    KilledPreempted = -32010,
+    /// Killed: wall clock.
+    KilledWallClock = -32011,
+    /// Killed: memory.
+    KilledMemory = -32012,
+    /// Killed: output.
+    KilledOutput = -32013,
+    /// Killed: parent dropped.
+    KilledParentDropped = -32014,
+    /// Delegation refused (root admission).
+    DelegationRefused = -32020,
+    /// Audit unavailable.
+    AuditUnavailable = -32030,
 }
 
 impl RpcCode {
@@ -45,6 +65,16 @@ impl RpcCode {
             Self::Denied => "Denied",
             Self::UnknownTool => "Unknown tool",
             Self::ProvisionFailed => "Provision failed",
+            Self::ToolInvalidInput => "Tool error: invalid input",
+            Self::ToolCapabilityDenied => "Tool error: capability denied",
+            Self::ToolInternal => "Tool error: internal",
+            Self::KilledPreempted => "Killed: preempted",
+            Self::KilledWallClock => "Killed: wall clock",
+            Self::KilledMemory => "Killed: memory",
+            Self::KilledOutput => "Killed: output",
+            Self::KilledParentDropped => "Killed: parent dropped",
+            Self::DelegationRefused => "Delegation refused",
+            Self::AuditUnavailable => "Audit unavailable",
         }
     }
 }
@@ -54,7 +84,7 @@ impl RpcCode {
 pub enum RpcId {
     /// JSON string id.
     String(String),
-    /// JSON number id (stored as `serde_json::Number` string form via Value).
+    /// JSON number id.
     Number(serde_json::Number),
     /// Explicit JSON null.
     Null,

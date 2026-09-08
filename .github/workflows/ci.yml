@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 env:
@@ -48,7 +49,7 @@ jobs:
       - name: Require forbid(unsafe_code) except helix-runtime; one unsafe in artifact.rs
         run: |
           set -euo pipefail
-          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-ctl; do
+          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-sdk-macro helix-ctl; do
             if ! grep -R -q --include='*.rs' 'forbid(unsafe_code)' "crates/${crate}/src"; then
               echo "missing #![forbid(unsafe_code)] in ${crate}"
               exit 1
@@ -110,6 +111,56 @@ jobs:
       - name: Build hello-world component
         run: cargo component build --release --manifest-path tests/fixtures/hello-world/Cargo.toml
 
+
+
+  sdk1-helix-tool:
+    name: "SDK-1 #[helix_tool] component build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-component
+        run: cargo install cargo-component --locked --version 0.21.1
+      - name: Install wasm-tools
+        run: cargo install wasm-tools --locked --version 1.235.0
+      - name: Build sdk-tool component
+        run: cargo component build --release --manifest-path tests/fixtures/sdk-tool/Cargo.toml
+      - name: Assert signature and invoke exports
+        run: |
+          set -euo pipefail
+          wasm=$(find tests/fixtures/sdk-tool/target /tmp -path '*sdk_tool.wasm' 2>/dev/null | head -1)
+          # Prefer local fixture target
+          if [ -f tests/fixtures/sdk-tool/target/wasm32-wasip1/release/sdk_tool.wasm ]; then
+            wasm=tests/fixtures/sdk-tool/target/wasm32-wasip1/release/sdk_tool.wasm
+          fi
+          test -f "$wasm"
+          wit=$(wasm-tools component wit "$wasm")
+          echo "$wit" | grep -q 'export signature:'
+          echo "$wit" | grep -q 'export invoke:'
+
+
+  sdk4-author-guide:
+    name: "SDK-4 author-guide examples e2e"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-component
+        run: cargo install cargo-component --locked --version 0.21.1
+      - name: Build guide example components
+        run: |
+          cargo component build --release --manifest-path tests/fixtures/word_count/Cargo.toml
+          cargo component build --release --manifest-path tests/fixtures/delegate_count/Cargo.toml
+          cargo component build --release --manifest-path tests/fixtures/read_b/Cargo.toml
+      - name: SDK-4 integration tests
+        run: cargo test -p helix-ctl --test sdk4_e2e -- --nocapture
+
   gw8-envelope-fuzz-smoke:
     name: GW-8 envelope fuzz smoke (30s)
     runs-on: ubuntu-latest
@@ -131,3 +182,63 @@ jobs:
         # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
         # This smoke keeps the target compiling and free of immediate panics.
         run: cargo +nightly fuzz run envelope -- -max_total_time=30
+
+  gw9-dpop-fuzz-smoke:
+    name: GW-9 dpop_proof fuzz smoke (30s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install C++ toolchain for libFuzzer
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/helix-gateway/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Smoke-run dpop_proof fuzz target
+        working-directory: crates/helix-gateway
+        # Full GW-9 gate is `cargo fuzz run dpop_proof -- -max_total_time=600` (10 min)
+        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # This smoke keeps the target compiling and free of immediate panics.
+        run: cargo +nightly fuzz run dpop_proof -- -max_total_time=30
+
+  gw10-payload-fuzz-smoke:
+    name: GW-10 payload_validator fuzz smoke (30s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install C++ toolchain for libFuzzer
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/helix-gateway/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Smoke-run payload_validator fuzz target
+        working-directory: crates/helix-gateway
+        # Full GW-10 gate is `cargo fuzz run payload_validator -- -max_total_time=600` (10 min)
+        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # This smoke keeps the target compiling and free of immediate panics.
+        run: cargo +nightly fuzz run payload_validator -- -max_total_time=30
+
+  adversarial:
+    name: HLX-37 adversarial suite (runtime + gateway)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+      - name: Runtime adversarial namespace
+        run: |
+          cargo test -p helix-runtime --test rt5_rt6_rt7_limits --test rt1_rt12_link --test rt2_rt3_rt4_fs --test rt8_http --test rt8_rt9_cancel --test rt13_rt16_delegate
+      - name: Gateway adversarial namespace + kill e2e
+        run: |
+          cargo test -p helix-gateway --test adversarial_gateway --test gw15_concurrency --test gw6_envelope --test gw1_gw2_auth --test gw3_gw4_gw14_dpop

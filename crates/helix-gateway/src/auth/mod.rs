@@ -1,19 +1,24 @@
-//! `EdDSA`-only JWT verification and JWK-thumbprint identity (M5-02 / HLX-33).
+//! `EdDSA`-only JWT verification, JWK-thumbprint identity, and `DPoP` (M5-02/03).
 //!
-//! Pure entry points: [`verify_token`], [`derive_identity`], [`bind_identity`].
-//! JWKS refresh: [`JwksCache`]. `DPoP` proof verification is HLX-34; this module
-//! exposes an optional proof-key hook on [`bind_identity`].
+//! Pure entry points: [`verify_token`], [`derive_identity`], [`bind_identity`],
+//! [`verify_dpop_proof`]. JWKS refresh: [`JwksCache`]. `DPoP`: [`dpop`].
 //!
-//! Cites: ADR-008 B.1; `interfaces/gateway-protocol.md` §2; security-checklist
-//! A1/A2; runbook §7; test-plan GW-1/GW-2.
+//! Cites: ADR-008 B.1/B.2; ADR-009 C.1; `interfaces/gateway-protocol.md` §§1–2;
+//! security-checklist A1/A2/A3a/A3b/C1; runbook §7; test-plan GW-1…4,9,12,14.
 
 mod bind;
+pub mod dpop;
 mod error;
 mod jwks;
 mod thumbprint;
 mod verify;
 
 pub use bind::bind_identity;
+pub use dpop::{
+    check_dpop, expected_htu, fuzz_dpop_proof, issue_nonce, load_nonce_key_file, nonce_acceptable,
+    verify_dpop_proof, DpopCheck, DpopRuntime, JtiCache, NonceKeys, VerifiedDpopProof,
+    METRIC_JTI_ENTRIES, METRIC_JTI_FULL,
+};
 pub use error::{AuthError, AuthReason};
 pub use jwks::{JwksCache, JwksSnapshot};
 pub use thumbprint::{derive_identity, identity_from_jkt, identity_to_jkt, Ed25519PublicJwk};
@@ -76,9 +81,9 @@ pub fn extract_access_token(
     }
 }
 
-/// End-to-end authenticate: extract → verify → bind (proof key deferred).
+/// End-to-end access-token authenticate: extract → verify → bind.
 ///
-/// `proof_key` is the HLX-34 hook; pass `None` for Bearer / until `DPoP` lands.
+/// `proof_key` is required when a `DPoP` proof was verified (HLX-34).
 ///
 /// # Errors
 ///

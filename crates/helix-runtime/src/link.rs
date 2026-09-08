@@ -63,6 +63,11 @@ pub fn linked_names(caps: &CapabilitySet) -> Vec<&'static str> {
             "wasi:cli/stdout",
             "wasi:cli/stderr",
             "wasi:cli/exit",
+            "wasi:cli/terminal-input",
+            "wasi:cli/terminal-output",
+            "wasi:cli/terminal-stdin",
+            "wasi:cli/terminal-stdout",
+            "wasi:cli/terminal-stderr",
         ]);
     }
     if caps.has(Interface::Clocks) {
@@ -219,6 +224,9 @@ where
     T: WasiView
         + wasmtime_wasi_http::WasiHttpView
         + crate::delegate::DelegateHostView
+        + crate::delegate_bindgen::helix::tool::types::Host
+        + crate::delegate_bindgen::helix::tool::caps::Host
+        + crate::delegate_bindgen::helix::tool::delegate::Host
         + Send
         + 'static,
 {
@@ -261,6 +269,17 @@ fn add_stdio<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {
         .map_err(|e| RuntimeError::provision(format!("link wasi:cli/stdout: {e}")))?;
     cli::stderr::add_to_linker::<T, HelixWasi>(linker, T::ctx)
         .map_err(|e| RuntimeError::provision(format!("link wasi:cli/stderr: {e}")))?;
+    // Optional terminal-* imports pulled in by some cargo-component / std::fs guests.
+    cli::terminal_input::add_to_linker::<T, HelixWasi>(linker, T::ctx)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:cli/terminal-input: {e}")))?;
+    cli::terminal_output::add_to_linker::<T, HelixWasi>(linker, T::ctx)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:cli/terminal-output: {e}")))?;
+    cli::terminal_stdin::add_to_linker::<T, HelixWasi>(linker, T::ctx)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:cli/terminal-stdin: {e}")))?;
+    cli::terminal_stdout::add_to_linker::<T, HelixWasi>(linker, T::ctx)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:cli/terminal-stdout: {e}")))?;
+    cli::terminal_stderr::add_to_linker::<T, HelixWasi>(linker, T::ctx)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:cli/terminal-stderr: {e}")))?;
     Ok(())
 }
 

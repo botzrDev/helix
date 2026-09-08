@@ -1,7 +1,8 @@
 //! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
 //! bit-driven capability linking, filesystem grants, resource limits,
 //! cancellation, HTTP outbound, soak/pool accounting, and `helix:delegate`
-//! (M4-01…M4-08 / HLX-24…HLX-31).
+//! (M4-01…M4-08 / HLX-24…HLX-31) plus payload schema validation reused from
+//! the gateway path (HLX-35).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -60,6 +61,7 @@ pub mod bounded;
 pub mod cancel;
 pub mod config;
 pub mod delegate;
+mod delegate_bindgen;
 pub mod engine;
 pub mod error;
 pub mod fs;
@@ -72,6 +74,7 @@ pub mod pool;
 pub mod preempt;
 pub mod register;
 pub mod signature;
+pub mod validate;
 
 pub use admission::{IdentityPermit, IdentitySemaphore};
 pub use artifact::{
@@ -104,9 +107,9 @@ pub use http::{
 };
 pub use invoke::{
     deliver_output, invoke, invoke_pooled, invoke_with_cancel, invoke_with_cancel_pooled,
-    preempt_deadline_ticks, run_limited, run_limited_pooled, InvokeHost, InvokeSuccess, NopHook,
-    RecordingHook, TerminalGuard, TerminalHook, TerminalKind, TerminalRecord, METRIC_KILL_MEMORY,
-    METRIC_KILL_OUTPUT,
+    invoke_with_delegation, preempt_deadline_ticks, run_limited, run_limited_pooled, InvokeHost,
+    InvokeSuccess, NopHook, RecordingHook, TerminalGuard, TerminalHook, TerminalKind,
+    TerminalRecord, METRIC_KILL_MEMORY, METRIC_KILL_OUTPUT,
 };
 pub use limits::{HelixLimiter, DEFAULT_TABLE_ELEMENTS};
 pub use link::{link, link_with_names, linked_names, provision_pre, provision_pre_with_delegate};
@@ -119,6 +122,9 @@ pub use register::{
     format_register_output, register_wasm, reregister_all, RegisterOutcome, ReregisterReport,
 };
 pub use signature::{read_signature, ToolSignatureInfo};
+pub use validate::{
+    payload as validate_payload, PathError as PayloadPathError, Schema as PayloadSchema,
+};
 
 /// Metric name: histogram of instantiate latency (seconds).
 pub const METRIC_INSTANTIATE_SECONDS: &str = "helix_instantiate_seconds";

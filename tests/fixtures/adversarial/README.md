@@ -1,22 +1,20 @@
-# Adversarial fixtures (HLX-27…HLX-29 / RT-5…RT-7, RT-10)
+# Adversarial fixtures (HLX-27…HLX-37)
 
 | File | Test | Behavior |
 |---|---|---|
 | `spin.wasm` / `spin.wat` | RT-5 | `run` = `loop {}`; killed by `preempt_ticks` |
 | `membomb.wasm` / `membomb.wat` | RT-6 | `run` grows memory until `ResourceLimiter` traps |
-| `trivial.wasm` / `trivial.wat` | RT-10 | `run` = `nop`; soak / pool accounting (HLX-29) |
+| `flood.wasm` | RT-7 / HLX-37 | invoke guest returns oversized output → `Killed(Output)` |
+| `trivial.wasm` / `trivial.wat` | RT-10 | soak / pool accounting |
+| `runtime/spin_invoke.wasm` | HLX-37 | helix tool `invoke` busy-loop → gateway `-32010` |
+| `runtime/membomb_invoke.wasm` | HLX-37 | helix tool memory bomb → gateway `-32012` |
+| `runtime/flood.wasm` | HLX-37 | helix tool output flood → gateway `-32013` |
+| `runtime/escalate.wasm` / `fanout.wasm` | RT-13/14 | delegate-error variants |
+| `runtime/child_echo.wasm` / `slow_child.wasm` | RT-13…16 | child helpers |
 
-Rebuild WASM with `wasm-tools parse <name>.wat -o <name>.wasm`.
+## Split
 
-RT-7 (`output_bytes + 1` → `Killed(Output)`, no partial output) is asserted on the
-result channel via `BoundedWriter` / `deliver_output` (S4). A guest flood
-fixture is not required for the channel bound.
+- `runtime/` — escalate / fanout / child_echo / slow_child / invoke kill guests
+- `gateway/` — reserved corpora for gateway-only cases (logic lives in `adversarial_gateway` tests)
 
-BENCH-8 (p99 ≤ 12 ms at `preempt_ticks = 10`) is deferred to M7-01 / informational.
-BENCH-7 (RSS after 100,000 at c=64) is deferred to M7-01; RT-10 covers the
-10,000 sequential zero-leak gate.
-
-## Split (HLX-31)
-
-- `runtime/` — escalate / fanout / child_echo / slow_child (RT-13…RT-16)
-- `gateway/` — reserved for M5-06 / HLX-37
+Rebuild WAT: `wasm-tools parse <name>.wat -o <name>.wasm`.

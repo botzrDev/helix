@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 env:
@@ -175,3 +176,19 @@ jobs:
         # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
         # This smoke keeps the target compiling and free of immediate panics.
         run: cargo +nightly fuzz run payload_validator -- -max_total_time=30
+
+  adversarial:
+    name: HLX-37 adversarial suite (runtime + gateway)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+      - name: Runtime adversarial namespace
+        run: |
+          cargo test -p helix-runtime --test rt5_rt6_rt7_limits --test rt1_rt12_link --test rt2_rt3_rt4_fs --test rt8_http --test rt8_rt9_cancel --test rt13_rt16_delegate
+      - name: Gateway adversarial namespace + kill e2e
+        run: |
+          cargo test -p helix-gateway --test adversarial_gateway --test gw15_concurrency --test gw6_envelope --test gw1_gw2_auth --test gw3_gw4_gw14_dpop

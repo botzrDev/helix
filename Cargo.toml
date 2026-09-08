@@ -22,6 +22,10 @@ publish = false
 wasmtime = "36.0"
 wasmtime-wasi = "36.0"
 wasmtime-wasi-io = "36.0"
+wasmtime-wasi-http = { version = "36.0", default-features = false }
+http = "1"
+hyper = { version = "1", features = ["client", "http1"] }
+bytes = "1"
 anyhow = "1"
 wit-bindgen = "0.44"
 tokio = "1"

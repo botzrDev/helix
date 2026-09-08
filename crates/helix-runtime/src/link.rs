@@ -19,7 +19,8 @@
 //!
 //! - **Filesystem** (bit set): `wasi:filesystem` linked; preopens installed by
 //!   [`crate::host::WasiHost::from_capability_set`] (HLX-26 / cap-std, `O_NOFOLLOW`).
-//! - **HTTP outbound** (bit set): trap stub for `outgoing-handler` (HLX-30).
+//! - **HTTP outbound** (bit set): `wasi:http` via wasmtime-wasi-http with
+//!   [`crate::http`] `HostGrant` enforcement (HLX-30).
 
 use helix_caps::{CapabilitySet, Interface};
 use wasmtime::component::{HasData, Linker};
@@ -78,7 +79,7 @@ pub fn linked_names(caps: &CapabilitySet) -> Vec<&'static str> {
         out.extend(["wasi:filesystem/types", "wasi:filesystem/preopens"]);
     }
     if caps.has(Interface::HttpOutbound) {
-        out.push("wasi:http/outgoing-handler");
+        out.extend(["wasi:http/types", "wasi:http/outgoing-handler"]);
     }
     out
 }
@@ -127,7 +128,10 @@ fn interface_for_name(name: &str) -> Option<Interface> {
 /// # Errors
 ///
 /// Returns [`RuntimeError::Provision`] when a host binding fails to register.
-pub fn link<T: WasiView>(engine: &Engine, caps: &CapabilitySet) -> Result<Linker<T>, RuntimeError> {
+pub fn link<T>(engine: &Engine, caps: &CapabilitySet) -> Result<Linker<T>, RuntimeError>
+where
+    T: WasiView + wasmtime_wasi_http::WasiHttpView + 'static,
+{
     let (linker, _) = link_with_names(engine, caps)?;
     Ok(linker)
 }
@@ -137,16 +141,22 @@ pub fn link<T: WasiView>(engine: &Engine, caps: &CapabilitySet) -> Result<Linker
 /// # Errors
 ///
 /// Returns [`RuntimeError::Provision`] when a host binding fails to register.
-pub fn link_with_names<T: WasiView>(
+pub fn link_with_names<T>(
     engine: &Engine,
     caps: &CapabilitySet,
-) -> Result<(Linker<T>, Vec<&'static str>), RuntimeError> {
+) -> Result<(Linker<T>, Vec<&'static str>), RuntimeError>
+where
+    T: WasiView + wasmtime_wasi_http::WasiHttpView + 'static,
+{
     let names = linked_names(caps);
     assert_s1(caps, &names);
 
     let mut linker = Linker::<T>::new(engine);
 
-    if caps.has(Interface::Stdio) || caps.has(Interface::Filesystem) {
+    if caps.has(Interface::Stdio)
+        || caps.has(Interface::Filesystem)
+        || caps.has(Interface::HttpOutbound)
+    {
         add_io_sync(&mut linker)?;
     }
     if caps.has(Interface::Stdio) {
@@ -162,7 +172,7 @@ pub fn link_with_names<T: WasiView>(
         add_filesystem(&mut linker)?;
     }
     if caps.has(Interface::HttpOutbound) {
-        add_http_stub(&mut linker)?;
+        add_http(&mut linker)?;
     }
 
     assert_s1(caps, &names);
@@ -174,11 +184,14 @@ pub fn link_with_names<T: WasiView>(
 /// # Errors
 ///
 /// [`RuntimeError::Provision`] with [`RuntimeError::GATEWAY_CODE`].
-pub fn provision_pre<T: WasiView>(
+pub fn provision_pre<T>(
     engine: &Engine,
     component: &wasmtime::component::Component,
     caps: &CapabilitySet,
-) -> Result<wasmtime::component::InstancePre<T>, RuntimeError> {
+) -> Result<wasmtime::component::InstancePre<T>, RuntimeError>
+where
+    T: WasiView + wasmtime_wasi_http::WasiHttpView + 'static,
+{
     let linker = link::<T>(engine, caps)?;
     linker.instantiate_pre(component).map_err(|err| {
         RuntimeError::provision(format!(
@@ -238,17 +251,12 @@ fn add_filesystem<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeErro
     Ok(())
 }
 
-fn add_http_stub<T>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {
-    let mut instance = linker
-        .instance("wasi:http/outgoing-handler@0.2.0")
-        .map_err(|e| RuntimeError::provision(format!("link http outgoing-handler: {e}")))?;
-    instance
-        .func_new("handle", |_store, _params, _results| {
-            Err(anyhow::anyhow!(
-                "http outbound stub: HostGrant enforcement lands in HLX-30"
-            ))
-        })
-        .map_err(|e| RuntimeError::provision(format!("define http handle stub: {e}")))?;
+fn add_http<T>(linker: &mut Linker<T>) -> Result<(), RuntimeError>
+where
+    T: wasmtime_wasi_http::WasiHttpView + 'static,
+{
+    wasmtime_wasi_http::add_only_http_to_linker_sync(linker)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:http: {e}")))?;
     Ok(())
 }
 

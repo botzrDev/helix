@@ -44,6 +44,33 @@ impl Method {
             Self::Delete => 1 << 5,
         }
     }
+
+    /// Wire / HTTP method name (uppercase).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Head => "HEAD",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+        }
+    }
+
+    /// Parse a standard method name (case-insensitive). Unknown → `None`.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Method> {
+        match name.to_ascii_uppercase().as_str() {
+            "GET" => Some(Self::Get),
+            "HEAD" => Some(Self::Head),
+            "POST" => Some(Self::Post),
+            "PUT" => Some(Self::Put),
+            "PATCH" => Some(Self::Patch),
+            "DELETE" => Some(Self::Delete),
+            _ => None,
+        }
+    }
 }
 
 /// Bitmask of HTTP methods. Bit order: GET=0, HEAD=1, POST=2, PUT=3, PATCH=4, DELETE=5.
@@ -92,6 +119,12 @@ impl MethodMask {
             Method::Delete,
         ];
         ALL.into_iter().filter(|m| self.0 & m.bit() != 0).collect()
+    }
+
+    /// True if `method` is permitted by this mask.
+    #[must_use]
+    pub fn contains(self, method: Method) -> bool {
+        self.0 & method.bit() != 0
     }
 }
 

@@ -133,7 +133,7 @@ fn rt12_link_binds_exactly_bits_set() {
         ),
         (
             &[Interface::HttpOutbound],
-            &["wasi:http/outgoing-handler"],
+            &["wasi:http/types", "wasi:http/outgoing-handler"],
             &["wasi:cli/", "wasi:sockets/", "environment"],
         ),
     ];
@@ -184,6 +184,7 @@ fn rt12_all_bits_union_of_individuals() {
     assert!(names.contains(&"wasi:clocks/wall-clock"));
     assert!(names.contains(&"wasi:random/random"));
     assert!(names.contains(&"wasi:filesystem/preopens"));
+    assert!(names.contains(&"wasi:http/types"));
     assert!(names.contains(&"wasi:http/outgoing-handler"));
     assert!(!names.iter().any(|n| n.contains("environment")));
     assert!(!names.iter().any(|n| n.starts_with("wasi:sockets/")));

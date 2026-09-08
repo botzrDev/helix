@@ -1,26 +1,33 @@
 //! Per-request WASI host state for capability-linked instantiation.
 
-use helix_caps::CapabilitySet;
+use helix_caps::{CapabilitySet, Interface, MethodMask};
 use tokio_util::sync::CancellationToken;
 use wasmtime::component::ResourceTable;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::body::HyperOutgoingBody;
+use wasmtime_wasi_http::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
+use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 
 use crate::error::KillCause;
 use crate::fs::{apply_filesystem_grants, FileGrantStages, FsGrantError};
+use crate::http::{send_request_with_grants, HostGrantTable};
 
-/// Store data satisfying [`WasiView`] for bit-driven linking.
+/// Store data satisfying [`WasiView`] / [`WasiHttpView`] for bit-driven linking.
 ///
 /// Environment variables are never populated (B10): the builder is left without
 /// `env` entries. Sockets are never linked (see [`crate::link`]).
 ///
 /// Filesystem preopens come from [`CapabilitySet`] file/dir grants (HLX-26).
+/// HTTP host grants are resolved into [`HostGrantTable`] (HLX-30).
 ///
 /// Every host function clones [`Self::cancellation_token`] and
 /// `tokio::select!`s against it (HLX-28 / L1). Blocking host ops use
-/// [`crate::cancel::host_select`].
+/// [`crate::cancel::host_select`] / [`crate::http::send_request_with_grants`].
 pub struct WasiHost {
     ctx: WasiCtx,
     table: ResourceTable,
+    http: WasiHttpCtx,
+    hosts: HostGrantTable,
     /// `FileGrant` staging directories; must outlive `ctx` preopens.
     #[allow(dead_code)]
     file_stages: FileGrantStages,
@@ -32,6 +39,7 @@ impl std::fmt::Debug for WasiHost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WasiHost")
             .field("file_stages", &self.file_stages.len())
+            .field("host_grants", &self.hosts.entries().len())
             .field("cancelled", &self.cancel.is_cancelled())
             .finish_non_exhaustive()
     }
@@ -54,20 +62,20 @@ impl WasiHost {
         Self {
             ctx,
             table: ResourceTable::new(),
+            http: WasiHttpCtx::new(),
+            hosts: HostGrantTable::empty(),
             file_stages: FileGrantStages::default(),
             cancel,
         }
     }
 
-    /// Build host state from `caps`, installing `FileGrant` / `DirGrant` preopens.
-    ///
-    /// When the filesystem bit is clear, no preopens are installed (even if
-    /// grants were somehow present, [`CapabilitySet::new`] rejects orphans).
+    /// Build host state from `caps`, installing FS preopens and HTTP grants.
     ///
     /// # Errors
     ///
     /// [`FsGrantError::CapabilityDenied`] when a grant path is a symlink or
     /// cannot be opened with `O_NOFOLLOW`.
+    /// [`FsGrantError::MissingInternerPath`] when host/file ids cannot be resolved.
     pub fn from_capability_set(caps: &CapabilitySet) -> Result<Self, FsGrantError> {
         Self::from_capability_set_with_token(caps, CancellationToken::new())
     }
@@ -76,21 +84,21 @@ impl WasiHost {
     ///
     /// # Errors
     ///
-    /// [`FsGrantError::CapabilityDenied`] when a grant path is a symlink or
-    /// cannot be opened with `O_NOFOLLOW`.
+    /// Same as [`Self::from_capability_set`].
     pub fn from_capability_set_with_token(
         caps: &CapabilitySet,
         cancel: CancellationToken,
     ) -> Result<Self, FsGrantError> {
         // Deliberately no `.env(...)` / `.envs(...)` — B10.
         let mut builder = WasiCtxBuilder::new();
-        // Sync host open path for tests and request-path FS without requiring
-        // a multi-thread tokio reactor for every openat.
         builder.allow_blocking_current_thread(true);
         let stages = apply_filesystem_grants(&mut builder, caps)?;
+        let hosts = resolve_host_grants(caps)?;
         Ok(Self {
             ctx: builder.build(),
             table: ResourceTable::new(),
+            http: WasiHttpCtx::new(),
+            hosts,
             file_stages: stages,
             cancel,
         })
@@ -107,14 +115,33 @@ impl WasiHost {
         self.cancel = cancel;
     }
 
+    /// Resolved HTTP host grants for this sandbox.
+    #[must_use]
+    pub fn host_grants(&self) -> &HostGrantTable {
+        &self.hosts
+    }
+
     /// Kill cause preferred when this host's token is cancelled mid-call.
-    ///
-    /// Root requests treat cancel as wall-clock; child contexts override via
-    /// [`crate::cancel::RequestLifecycle`] reason before calling host ops.
     #[must_use]
     pub fn cancel_kill_cause(&self) -> KillCause {
         KillCause::WallClock
     }
+}
+
+fn resolve_host_grants(caps: &CapabilitySet) -> Result<HostGrantTable, FsGrantError> {
+    if !caps.has(Interface::HttpOutbound) || caps.hosts().is_empty() {
+        return Ok(HostGrantTable::empty());
+    }
+    let intern = caps.interner();
+    if intern.is_empty() {
+        return Err(FsGrantError::MissingInternerPath);
+    }
+    let mut entries: Vec<(String, MethodMask)> = Vec::with_capacity(caps.hosts().len());
+    for g in caps.hosts() {
+        let authority = intern.authority(g.authority()).to_ascii_lowercase();
+        entries.push((authority, g.methods()));
+    }
+    Ok(HostGrantTable::from_entries(entries))
 }
 
 impl WasiView for WasiHost {
@@ -123,5 +150,23 @@ impl WasiView for WasiHost {
             ctx: &mut self.ctx,
             table: &mut self.table,
         }
+    }
+}
+
+impl WasiHttpView for WasiHost {
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.http
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+
+    fn send_request(
+        &mut self,
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+    ) -> HttpResult<HostFutureIncomingResponse> {
+        send_request_with_grants(&self.hosts, &self.cancel, request, config)
     }
 }

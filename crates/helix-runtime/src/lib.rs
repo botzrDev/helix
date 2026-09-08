@@ -1,6 +1,6 @@
 //! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
 //! bit-driven capability linking, filesystem grants, resource limits,
-//! cancellation, and soak/pool accounting (M4-01…M4-06 / HLX-24…HLX-29).
+//! cancellation, HTTP outbound, and soak/pool accounting (M4-01…M4-07 / HLX-24…HLX-30).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -26,6 +26,10 @@
 //! [`cancel::RequestLifecycle`] aborts children with
 //! [`error::KillCause::ParentDropped`] (`-32014`). Child `JoinSet` scaffolding
 //! awaits `helix:delegate` (HLX-31).
+//!
+//! **HTTP outbound (HLX-30):** [`http`] enforces `HostGrant` authority + method
+//! before any socket opens (`HTTP-request-denied`); outbound calls select against
+//! the request token so tarpits become [`error::KillCause::WallClock`].
 //!
 //! **Soak / pool accounting (HLX-29):** [`pool::InstancePool::acquire`] holds a
 //! slot for each invocation (`helix_pool_in_use`); RT-10 asserts 10,000 sequential
@@ -57,6 +61,7 @@ pub mod engine;
 pub mod error;
 pub mod fs;
 pub mod host;
+pub mod http;
 pub mod invoke;
 pub mod limits;
 pub mod link;
@@ -83,6 +88,10 @@ pub use fs::{
     FileGrantStages, FsGrantError,
 };
 pub use host::WasiHost;
+pub use http::{
+    check_host_grant, helix_method, host_http_get_status, normalize_authority,
+    send_request_with_grants, HostGrantTable, HostHttpError, WALL_CLOCK_TRAP_MSG,
+};
 pub use invoke::{
     deliver_output, invoke, invoke_pooled, invoke_with_cancel, invoke_with_cancel_pooled,
     preempt_deadline_ticks, run_limited, run_limited_pooled, InvokeHost, InvokeSuccess, NopHook,

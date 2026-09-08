@@ -6,6 +6,22 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+description = "Author-facing HELIX tool SDK: #[helix_tool], ToolError, delegate."
+
+[dependencies]
+helix-sdk-macro = { path = "../helix-sdk-macro" }
+helix-sdk-wit = { path = "../helix-sdk-wit" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+wit-bindgen-rt = { workspace = true }
+
+[dev-dependencies]
+helix-policy = { path = "../helix-policy" }
+trybuild = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+schemars = { workspace = true }
 
 [lints]
 workspace = true

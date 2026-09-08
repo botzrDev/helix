@@ -49,7 +49,7 @@ jobs:
       - name: Require forbid(unsafe_code) except helix-runtime; one unsafe in artifact.rs
         run: |
           set -euo pipefail
-          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-ctl; do
+          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-sdk-macro helix-ctl; do
             if ! grep -R -q --include='*.rs' 'forbid(unsafe_code)' "crates/${crate}/src"; then
               echo "missing #![forbid(unsafe_code)] in ${crate}"
               exit 1
@@ -110,6 +110,36 @@ jobs:
         run: cargo install cargo-component --locked --version 0.21.1
       - name: Build hello-world component
         run: cargo component build --release --manifest-path tests/fixtures/hello-world/Cargo.toml
+
+
+
+  sdk1-helix-tool:
+    name: "SDK-1 #[helix_tool] component build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-component
+        run: cargo install cargo-component --locked --version 0.21.1
+      - name: Install wasm-tools
+        run: cargo install wasm-tools --locked --version 1.235.0
+      - name: Build sdk-tool component
+        run: cargo component build --release --manifest-path tests/fixtures/sdk-tool/Cargo.toml
+      - name: Assert signature and invoke exports
+        run: |
+          set -euo pipefail
+          wasm=$(find tests/fixtures/sdk-tool/target /tmp -path '*sdk_tool.wasm' 2>/dev/null | head -1)
+          # Prefer local fixture target
+          if [ -f tests/fixtures/sdk-tool/target/wasm32-wasip1/release/sdk_tool.wasm ]; then
+            wasm=tests/fixtures/sdk-tool/target/wasm32-wasip1/release/sdk_tool.wasm
+          fi
+          test -f "$wasm"
+          wit=$(wasm-tools component wit "$wasm")
+          echo "$wit" | grep -q 'export signature:'
+          echo "$wit" | grep -q 'export invoke:'
 
   gw8-envelope-fuzz-smoke:
     name: GW-8 envelope fuzz smoke (30s)

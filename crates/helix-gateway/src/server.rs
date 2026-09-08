@@ -14,13 +14,14 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use helix_audit::AuditHealth;
+use helix_audit::{AuditHealth, AuditWriter, CapsStore};
 use helix_caps::RequestId;
 use helix_policy::PolicyHolder;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 
+use crate::admission::IdentityAdmission;
 use crate::auth::dpop::{check_dpop, DpopCheck, DpopRuntime, NonceKeys};
 use crate::auth::{
     bind_identity, extract_access_token, verify_token, AuthError, JwksCache, VerificationKeys,
@@ -29,9 +30,10 @@ use crate::auth::{
 use crate::config::{DpopMode, GatewayConfig, HealthDetail};
 use crate::envelope::{parse_envelope, EnvelopeOutcome, ParsedRequest};
 use crate::health::HealthStatus;
-use crate::request::{Request, RequestBuildError};
+use crate::pipeline::{self, PipelineCtx};
 use crate::rpc::{self, RpcCode};
-use crate::validate::{self, SchemaRegistry};
+use crate::tools::ToolRuntime;
+use crate::validate::SchemaRegistry;
 
 /// Shared gateway state.
 #[derive(Clone)]
@@ -48,6 +50,14 @@ pub struct GatewayState {
     dpop: Option<Arc<DpopRuntime>>,
     /// Input-schema cache keyed by tool digest (HLX-24 signature / HLX-35).
     schemas: Arc<arc_swap::ArcSwap<SchemaRegistry>>,
+    /// M3 audit writer (optional until wired).
+    audit: Option<AuditWriter>,
+    /// Caps side-file store.
+    caps: Option<Arc<std::sync::Mutex<CapsStore>>>,
+    /// Per-identity admission.
+    admission: IdentityAdmission,
+    /// Optional tool runtime for invoke/describe.
+    tools: Option<Arc<ToolRuntime>>,
 }
 
 impl GatewayState {
@@ -63,6 +73,7 @@ impl GatewayState {
             issuer: config.issuer.clone(),
             audience: config.audience.clone(),
         };
+        config.warn_verbose_denials();
         Self {
             config: Arc::new(config),
             policy: Arc::new(policy),
@@ -72,6 +83,59 @@ impl GatewayState {
             verify: Arc::new(verify),
             dpop: dpop.map(Arc::new),
             schemas: Arc::new(arc_swap::ArcSwap::from_pointee(SchemaRegistry::new())),
+            audit: None,
+            caps: None,
+            admission: IdentityAdmission::new(),
+            tools: None,
+        }
+    }
+
+    /// Attach audit writer + optional caps store (HLX-36).
+    pub fn set_audit(&mut self, writer: AuditWriter, caps: Option<CapsStore>) {
+        self.set_audit_health(writer.health());
+        self.audit = Some(writer);
+        self.caps = caps.map(|c| Arc::new(std::sync::Mutex::new(c)));
+    }
+
+    /// Attach tool runtime.
+    pub fn set_tools(&mut self, tools: Arc<ToolRuntime>) {
+        self.tools = Some(tools);
+        if let Some(t) = &self.tools {
+            // artifacts_loaded reflects registered tools when known.
+            let _ = t;
+        }
+    }
+
+    /// Admission map (tests).
+    #[must_use]
+    pub fn admission(&self) -> &IdentityAdmission {
+        &self.admission
+    }
+
+    /// Tool runtime (tests).
+    #[must_use]
+    pub fn tools(&self) -> Option<&Arc<ToolRuntime>> {
+        self.tools.as_ref()
+    }
+
+    /// Audit writer (tests).
+    #[must_use]
+    pub fn audit_writer(&self) -> Option<&AuditWriter> {
+        self.audit.as_ref()
+    }
+
+    fn pipeline_ctx(&self) -> PipelineCtx {
+        // Refresh health from writer when present.
+        if let Some(w) = &self.audit {
+            self.set_audit_health(w.health());
+        }
+        PipelineCtx {
+            config: Arc::clone(&self.config),
+            audit: self.audit.clone(),
+            caps: self.caps.clone(),
+            admission: self.admission.clone(),
+            tools: self.tools.clone(),
+            schemas: self.schemas.load(),
         }
     }
 
@@ -296,7 +360,7 @@ async fn rpc_handler(
 
     match parse_envelope(&body) {
         EnvelopeOutcome::Err(err) => (StatusCode::OK, Json(err)).into_response(),
-        EnvelopeOutcome::Ok(parsed) => dispatch(&state, &headers, &parsed),
+        EnvelopeOutcome::Ok(parsed) => dispatch(&state, &headers, &parsed).await,
     }
 }
 
@@ -338,7 +402,7 @@ fn log_source(state: &GatewayState, peer: IpAddr, headers: &HeaderMap) {
     }
 }
 
-fn dispatch(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedRequest) -> Response {
+async fn dispatch(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedRequest) -> Response {
     match parsed.method.as_str() {
         "helix.health" => {
             let body = state.health_json();
@@ -349,8 +413,8 @@ fn dispatch(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedRequest) -
                 .into_response()
         }
         "helix.nonce" => dispatch_nonce(state, parsed),
-        "helix.invoke" => dispatch_invoke(state, headers, parsed),
-        // `helix.describe` lands in a later M5 ticket.
+        "helix.invoke" => dispatch_invoke(state, headers, parsed).await,
+        "helix.describe" => dispatch_describe(state, headers, parsed).await,
         _ => (
             StatusCode::OK,
             Json(rpc::error(
@@ -425,21 +489,24 @@ fn dispatch_nonce(state: &GatewayState, parsed: &ParsedRequest) -> Response {
     with_dpop_nonce((StatusCode::OK, Json(body)).into_response(), Some(&nonce))
 }
 
-#[allow(clippy::too_many_lines)]
-fn dispatch_invoke(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedRequest) -> Response {
+#[allow(clippy::result_large_err, clippy::unused_async)]
+async fn authenticate(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    parsed: &ParsedRequest,
+) -> Result<(helix_caps::Identity, Option<String>), Response> {
     let keys = &state.jwks.load().keys;
     let mode = state.config.dpop;
     let _ = METRIC_AUTH_FAILED;
 
-    // Extract scheme first so we know whether a proof is required.
     let extracted = match extract_access_token(authorization_value(headers), mode) {
         Ok(e) => e,
         Err(e) => {
-            return (
+            return Err((
                 StatusCode::OK,
                 Json(unauth_json(parsed.id.as_ref(), e.reason.as_str())),
             )
-                .into_response();
+                .into_response());
         }
     };
 
@@ -452,11 +519,11 @@ fn dispatch_invoke(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedReq
     let (proof_key, dpop_nonce_hdr) = if need_proof {
         let Some(dpop) = state.dpop.as_ref() else {
             let err = AuthError::signature();
-            return (
+            return Err((
                 StatusCode::OK,
                 Json(unauth_json(parsed.id.as_ref(), err.reason.as_str())),
             )
-                .into_response();
+                .into_response());
         };
         match check_dpop(dpop_header_value(headers), dpop, "/", None) {
             Ok(DpopCheck::Ok(proof)) => {
@@ -465,121 +532,76 @@ fn dispatch_invoke(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedReq
             }
             Ok(DpopCheck::NonceChallenge { nonce, .. }) => {
                 let body = unauth_json(parsed.id.as_ref(), "nonce");
-                // Metric: reason nonce
                 let _ = AuthError::nonce();
-                return with_dpop_nonce(
+                return Err(with_dpop_nonce(
                     (StatusCode::UNAUTHORIZED, Json(body)).into_response(),
                     Some(&nonce),
-                );
+                ));
             }
             Err(e) => {
-                return (
+                return Err((
                     StatusCode::OK,
                     Json(unauth_json(parsed.id.as_ref(), e.reason.as_str())),
                 )
-                    .into_response();
+                    .into_response());
             }
         }
     } else {
         (None, None)
     };
 
-    let identity = match verify_token(&extracted.token, keys, state.verify.as_ref())
+    match verify_token(&extracted.token, keys, state.verify.as_ref())
         .and_then(|v| bind_identity(&v.claims, proof_key.as_ref()))
     {
-        Ok(id) => id,
-        Err(e) => {
-            return with_dpop_nonce(
-                (
-                    StatusCode::OK,
-                    Json(unauth_json(parsed.id.as_ref(), e.reason.as_str())),
-                )
-                    .into_response(),
-                dpop_nonce_hdr.as_deref(),
-            );
+        Ok(id) => Ok((id, dpop_nonce_hdr)),
+        Err(e) => Err(with_dpop_nonce(
+            (
+                StatusCode::OK,
+                Json(unauth_json(parsed.id.as_ref(), e.reason.as_str())),
+            )
+                .into_response(),
+            dpop_nonce_hdr.as_deref(),
+        )),
+    }
+}
+
+async fn dispatch_invoke(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    parsed: &ParsedRequest,
+) -> Response {
+    let request_id = next_request_id();
+    let auth = authenticate(state, headers, parsed).await;
+    let (identity, dpop_nonce_hdr) = match auth {
+        Ok(v) => v,
+        Err(resp) => {
+            let ctx = state.pipeline_ctx();
+            let _ = pipeline::auth_failed(&ctx.audit, request_id, "signature", parsed.id.as_ref())
+                .await;
+            return resp;
         }
     };
 
     let snapshot = state.policy.guard();
-    let request_id = next_request_id();
-    let response = match Request::from_invoke(parsed, identity, snapshot, request_id) {
-        Ok(req) => {
-            let rid = request_id_string(req.id);
-            // Authenticated → Authorized: validate payload before instantiate (HLX-35).
-            if let Some(schema) = state.schemas.load().get(&req.tool) {
-                if let Err(err) = validate::payload(schema.as_ref(), &req.payload) {
-                    return with_dpop_nonce(
-                        (
-                            StatusCode::OK,
-                            Json(validate::invalid_params(
-                                parsed.id.as_ref(),
-                                &err,
-                                Some(&rid),
-                            )),
-                        )
-                            .into_response(),
-                        dpop_nonce_hdr.as_deref(),
-                    );
-                }
-            }
-            let data = json!({
-                "reason": "not_wired",
-                "request_id": rid,
-                "identity_bound": true,
-            });
-            let _ = (
-                req.identity,
-                req.tool,
-                req.payload.len(),
-                req.snapshot.version(),
-            );
-            (
-                StatusCode::OK,
-                Json(rpc::error(
-                    parsed.id.as_ref(),
-                    RpcCode::ProvisionFailed,
-                    Some(data),
-                )),
-            )
-                .into_response()
-        }
-        Err(RequestBuildError::InvalidParams(reason)) => (
-            StatusCode::OK,
-            Json(rpc::error(
-                parsed.id.as_ref(),
-                RpcCode::InvalidParams,
-                Some(json!({ "reason": reason })),
-            )),
-        )
-            .into_response(),
-        Err(RequestBuildError::BadInput) => (
-            StatusCode::OK,
-            Json(rpc::error(
-                parsed.id.as_ref(),
-                RpcCode::InvalidParams,
-                Some(json!({ "reason": "input_must_be_object", "path": "/input" })),
-            )),
-        )
-            .into_response(),
-        Err(RequestBuildError::UnknownTool(e)) => {
-            let data = match &e {
-                helix_policy::AliasDigestError::UnknownAlias { alias }
-                | helix_policy::AliasDigestError::Disagreement { alias, .. } => {
-                    json!({ "tool": alias })
-                }
-            };
-            (
-                StatusCode::OK,
-                Json(rpc::error(
-                    parsed.id.as_ref(),
-                    RpcCode::UnknownTool,
-                    Some(data),
-                )),
-            )
-                .into_response()
-        }
-    };
+    let ctx = state.pipeline_ctx();
+    let response = pipeline::run_invoke(&ctx, parsed, identity, request_id, snapshot).await;
+    with_dpop_nonce(response, dpop_nonce_hdr.as_deref())
+}
 
+async fn dispatch_describe(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    parsed: &ParsedRequest,
+) -> Response {
+    let request_id = next_request_id();
+    let auth = authenticate(state, headers, parsed).await;
+    let (identity, dpop_nonce_hdr) = match auth {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let snapshot = state.policy.guard();
+    let ctx = state.pipeline_ctx();
+    let response = pipeline::run_describe(&ctx, parsed, identity, request_id, snapshot).await;
     with_dpop_nonce(response, dpop_nonce_hdr.as_deref())
 }
 
@@ -591,11 +613,4 @@ fn next_request_id() -> RequestId {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
     let n = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     RequestId::from_u128((u128::from(millis) << 80) | u128::from(n))
-}
-
-fn request_id_string(id: RequestId) -> String {
-    serde_json::to_value(id)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_else(|| format!("{}", id.as_u128()))
 }

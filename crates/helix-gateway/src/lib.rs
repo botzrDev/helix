@@ -7,23 +7,44 @@
 //! M5-03 / HLX-34: `DPoP` RFC 9449 — HMAC nonces, challenge / `helix.nonce`,
 //! `external_url` `htu`, bounded sharded `jti` cache.
 //! M5-04 / HLX-35: [`validate::payload`] against registered `input-schema`
-//! (`-32602` + `data.path`); full state machine remains HLX-36.
+//! (`-32602` + `data.path`).
+//! M5-05 / HLX-36: full pipeline (state machine, audit wiring, error map incl.
+//! `-32030`, per-identity [`admission::IdentityAdmission`], `helix.describe`
+//! grant check, metrics).
 //!
-//! Cites: `interfaces/gateway-protocol.md` §§1–4,6; ADR-004; ADR-008 B.1/B.2;
-//! ADR-009 A.4, C.1.
+//! ## HOLES (remaining)
+//!
+//! - Root `-32020` admission for `depth`/`fanout`/`stale_snapshot`/`escalation` on HTTP
+//!   params is stubbed (`pipeline::refuse_root_delegation`); root HTTP requests
+//!   do not carry child tree bounds on the wire (ADR-009 A.4). Covered in-process
+//!   by `runtime::delegate` (RT-13/14).
+//! - Adversarial kill paths (`-32010`…`-32014`) through the gateway require
+//!   registered adversarial fixtures; unit coverage is in helix-runtime. GW-7
+//!   exercises them when artifacts are registered.
+//! - `Caps` dual-hash on escalation records (RT-13) still deferred (record key 7
+//!   is singular).
+//! - Full Draft 2020-12 schema keywords: see `helix_policy::input_schema` HOLE.
+//!
+//! Cites: `interfaces/gateway-protocol.md` §§1–4,6; `interfaces/state-machine.md`;
+//! ADR-008 D.3 / F.4; ADR-009 B.1 / B.2.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod admission;
 pub mod auth;
 mod config;
 mod envelope;
+pub mod error_map;
 mod health;
+pub mod pipeline;
 mod request;
 mod rpc;
 mod server;
+pub mod tools;
 pub mod validate;
 
+pub use admission::IdentityAdmission;
 pub use auth::{
     authenticate, bind_identity, check_dpop, derive_identity, expected_htu, extract_access_token,
     fuzz_dpop_proof, identity_from_jkt, identity_to_jkt, issue_nonce, load_nonce_key_file,
@@ -37,10 +58,12 @@ pub use config::{
     DEFAULT_DPOP_TTL_S,
 };
 pub use envelope::{parse_envelope, parse_envelope_value, EnvelopeOutcome, ParsedRequest};
+pub use error_map::{METRIC_IDENTITY_IN_USE, METRIC_INVOCATIONS_TOTAL, METRIC_POLICY_DENIED};
 pub use health::HealthStatus;
 pub use request::{Request, RequestBuildError};
 pub use rpc::{error as rpc_error, invalid_request, success as rpc_success, RpcCode, RpcId};
 pub use server::{router, GatewayRuntime, GatewayState};
+pub use tools::{LoadedTool, ToolRuntime};
 pub use validate::{
     fuzz_payload_validator, invalid_params as invalid_params_path, payload as validate_payload,
     registry_from_signatures, PathError as PayloadPathError, Schema as PayloadSchema,

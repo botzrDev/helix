@@ -131,3 +131,26 @@ jobs:
         # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
         # This smoke keeps the target compiling and free of immediate panics.
         run: cargo +nightly fuzz run envelope -- -max_total_time=30
+
+  gw9-dpop-fuzz-smoke:
+    name: GW-9 dpop_proof fuzz smoke (30s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install C++ toolchain for libFuzzer
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/helix-gateway/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Smoke-run dpop_proof fuzz target
+        working-directory: crates/helix-gateway
+        # Full GW-9 gate is `cargo fuzz run dpop_proof -- -max_total_time=600` (10 min)
+        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # This smoke keeps the target compiling and free of immediate panics.
+        run: cargo +nightly fuzz run dpop_proof -- -max_total_time=30
+

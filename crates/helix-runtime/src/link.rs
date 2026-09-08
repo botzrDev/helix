@@ -159,6 +159,11 @@ where
     {
         add_io_sync(&mut linker)?;
     }
+    // Always present: cargo-component tools import wasi:cli/environment via
+    // `include wasi:cli/imports`, but Interface::Environment was deleted
+    // (ADR-008 A.5 / B10). Provide an empty get-environment (never real env).
+    add_environment_empty(&mut linker)?;
+
     if caps.has(Interface::Stdio) {
         add_stdio(&mut linker)?;
     }
@@ -198,6 +203,40 @@ where
             "unlinked or mismatched import during capability projection: {err}"
         ))
     })
+}
+
+/// Like [`provision_pre`], also binding `helix:tool/delegate@1.0.0` (HLX-31).
+///
+/// # Errors
+///
+/// [`RuntimeError::Provision`] on linker or `instantiate_pre` failure.
+pub fn provision_pre_with_delegate<T>(
+    engine: &Engine,
+    component: &wasmtime::component::Component,
+    caps: &CapabilitySet,
+) -> Result<wasmtime::component::InstancePre<T>, RuntimeError>
+where
+    T: WasiView
+        + wasmtime_wasi_http::WasiHttpView
+        + crate::delegate::DelegateHostView
+        + Send
+        + 'static,
+{
+    let mut linker = link::<T>(engine, caps)?;
+    crate::delegate::add_delegate_to_linker(&mut linker)?;
+    linker.instantiate_pre(component).map_err(|err| {
+        RuntimeError::provision(format!(
+            "unlinked or mismatched import during capability projection: {err}"
+        ))
+    })
+}
+
+fn add_environment_empty<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {
+    // Empty environment — B10. Linked unconditionally so component instantiate
+    // succeeds; values are never populated from the host process.
+    wasmtime_wasi::p2::bindings::cli::environment::add_to_linker::<T, HelixWasi>(linker, T::ctx)
+        .map_err(|e| RuntimeError::provision(format!("link wasi:cli/environment: {e}")))?;
+    Ok(())
 }
 
 fn add_io_sync<T: WasiView>(linker: &mut Linker<T>) -> Result<(), RuntimeError> {

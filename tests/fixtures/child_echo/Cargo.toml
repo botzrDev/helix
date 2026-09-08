@@ -1,0 +1,29 @@
+[workspace]
+
+[package]
+name = "child-echo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "helix:child-echo"
+
+[package.metadata.component.target]
+path = "../../../wit"
+world = "tool"
+
+[package.metadata.component.target.dependencies]
+"wasi:cli" = { path = "../../../wit/deps/cli" }
+"wasi:http" = { path = "../../../wit/deps/http" }
+"wasi:clocks" = { path = "../../../wit/deps/clocks" }
+"wasi:filesystem" = { path = "../../../wit/deps/filesystem" }
+"wasi:io" = { path = "../../../wit/deps/io" }
+"wasi:random" = { path = "../../../wit/deps/random" }
+"wasi:sockets" = { path = "../../../wit/deps/sockets" }

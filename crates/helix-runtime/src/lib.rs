@@ -1,6 +1,7 @@
 //! HELIX wasmtime runtime: engine, artifact cache, `InstancePre` pool,
 //! bit-driven capability linking, filesystem grants, resource limits,
-//! cancellation, HTTP outbound, and soak/pool accounting (M4-01…M4-07 / HLX-24…HLX-30).
+//! cancellation, HTTP outbound, soak/pool accounting, and `helix:delegate`
+//! (M4-01…M4-08 / HLX-24…HLX-31).
 //!
 //! Compilation never happens on the request path (ADR-006). Artifacts are
 //! serialized at `helix-ctl tool register` and deserialized at startup.
@@ -53,10 +54,12 @@
 
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
+pub mod admission;
 pub mod artifact;
 pub mod bounded;
 pub mod cancel;
 pub mod config;
+pub mod delegate;
 pub mod engine;
 pub mod error;
 pub mod fs;
@@ -70,6 +73,7 @@ pub mod preempt;
 pub mod register;
 pub mod signature;
 
+pub use admission::{IdentityPermit, IdentitySemaphore};
 pub use artifact::{
     artifact_paths, digest_hex, digest_of_bytes, load_artifact_dir, write_artifact, ArtifactPaths,
     LoadedArtifact,
@@ -81,6 +85,12 @@ pub use cancel::{
     METRIC_KILL_PARENT_DROPPED, METRIC_KILL_WALL_CLOCK,
 };
 pub use config::RuntimeConfig;
+pub use delegate::{
+    add_delegate_to_linker, host_delegate, ChildAuditRecord, DelegateError, DelegateHostView,
+    DelegationAudit, DelegationCtx, DelegationSuccess, HostDelegationRequest, HostToolRef,
+    MapToolResolver, NopDelegationAudit, RecordingDelegationAudit, RefusalRecord, ToolResolver,
+    METRIC_CHILD_STORE_CREATED,
+};
 pub use engine::build_engine;
 pub use error::{InvokeError, KillCause, RuntimeError, Usage};
 pub use fs::{
@@ -99,7 +109,7 @@ pub use invoke::{
     METRIC_KILL_OUTPUT,
 };
 pub use limits::{HelixLimiter, DEFAULT_TABLE_ELEMENTS};
-pub use link::{link, link_with_names, linked_names, provision_pre};
+pub use link::{link, link_with_names, linked_names, provision_pre, provision_pre_with_delegate};
 pub use pool::{InstancePool, PoolGuard, PooledPre};
 pub use preempt::{
     default_preempt_ticks, record_preempt_kill, EpochTicker, EPOCH_TICK_MS, METRIC_KILL_EPOCH,

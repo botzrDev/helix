@@ -169,7 +169,9 @@ impl<H: TerminalHook + ?Sized> Drop for TerminalGuard<'_, H> {
 /// Store data for a capability-linked invoke: WASI host + limiter + cancel token.
 pub struct InvokeHost {
     wasi: WasiHost,
-    limiter: HelixLimiter,
+    pub(crate) limiter: HelixLimiter,
+    /// Present when this Store may call `helix:delegate` (HLX-31).
+    delegation: Option<crate::delegate::DelegationCtx>,
 }
 
 impl std::fmt::Debug for InvokeHost {
@@ -186,7 +188,12 @@ impl InvokeHost {
         Self::new_with_token(caps, memory_bytes, CancellationToken::new())
     }
 
-    fn new_with_token(
+    /// Build host with an explicit request cancellation token (HLX-28 / HLX-31).
+    ///
+    /// # Errors
+    ///
+    /// Filesystem grant open failures map to [`RuntimeError::Provision`].
+    pub fn new_with_token(
         caps: &CapabilitySet,
         memory_bytes: u64,
         token: CancellationToken,
@@ -196,6 +203,7 @@ impl InvokeHost {
         Ok(Self {
             wasi,
             limiter: HelixLimiter::new(memory_bytes),
+            delegation: None,
         })
     }
 
@@ -205,10 +213,31 @@ impl InvokeHost {
         &self.limiter
     }
 
+    /// Mutable borrow of the limiter (`Store::limiter` callback).
+    pub fn limiter_mut(&mut self) -> &mut HelixLimiter {
+        &mut self.limiter
+    }
+
     /// Request [`CancellationToken`] cloned into every host function (HLX-28).
     #[must_use]
     pub fn cancellation_token(&self) -> CancellationToken {
         self.wasi.cancellation_token()
+    }
+
+    /// Attach / replace the delegation context for `helix:delegate` (HLX-31).
+    pub fn set_delegation(&mut self, ctx: crate::delegate::DelegationCtx) {
+        self.delegation = Some(ctx);
+    }
+
+    /// Borrow the delegation context, if any.
+    #[must_use]
+    pub fn delegation(&self) -> Option<&crate::delegate::DelegationCtx> {
+        self.delegation.as_ref()
+    }
+
+    /// Mutable borrow of the delegation context, if any.
+    pub fn delegation_mut(&mut self) -> Option<&mut crate::delegate::DelegationCtx> {
+        self.delegation.as_mut()
     }
 }
 

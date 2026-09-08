@@ -21,6 +21,8 @@ publish = false
 [workspace.dependencies]
 wasmtime = "36.0"
 wasmtime-wasi = "36.0"
+wasmtime-wasi-io = "36.0"
+anyhow = "1"
 wit-bindgen = "0.44"
 tokio = "1"
 axum = "0.8"
@@ -32,6 +34,18 @@ proptest = "1.11.0"
 toml = "0.8.23"
 base64 = "0.22.1"
 log = "0.4.27"
+arc-swap = "1.7"
+clap = { version = "4.5", features = ["derive"] }
+minicbor = { version = "0.25", default-features = true, features = ["std"] }
+sha2 = "0.10"
+metrics = "0.24"
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hmac = "0.12"
+url = "2"
+httpdate = "1"
 
 [workspace.lints.rust]
 unexpected_cfgs = "warn"

@@ -188,7 +188,9 @@ impl Interner {
         self.parent_chain(descendant).contains(&ancestor)
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    /// True when no paths or authorities have been interned.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
         self.paths.is_empty() && self.authorities.is_empty()
     }
 

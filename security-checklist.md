@@ -13,7 +13,7 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | A4 | Payload validated against tool schema before instantiation | `validate::payload` | GW-5, GW-10 | [ ] |
 | A5 | Policy lookup is exact-match; no wildcards | `helix-policy::lookup` | POL-3 | [ ] |
 | A6 | Delegation cannot escalate | `runtime::delegate`, `helix-caps::attenuate` | CAPS-4, CAPS-5, POL-6, RT-13 | [ ] |
-| A7 | Output bounded | `runtime::BoundedWriter` | RT-7 | [ ] |
+| A7 | Output bounded | `runtime::BoundedWriter` | RT-7 | [x] |
 | A8 | Denial reasons do not leak policy contents unless `verbose_denials` | `gateway::error_map` | GW-7 | [ ] |
 | A9 | Ingress rate limiting covers **external** requests only; internally generated calls are bounded by A10 (ADR-008 A.4) | runbook section 1 | n/a | [ ] |
 | A10 | Resource exhaustion by an authorized caller through delegation: depth and fan-out enforced in `runtime::delegate`; per-identity cap at Authorized via `runtime::admission::IdentitySemaphore` (semaphore type owned by the runtime; HLX-31) | `runtime::delegate`, `runtime::admission` | RT-14, GW-15 | [ ] |
@@ -25,12 +25,12 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 |---|---|---|---|---|
 | B1 | Identity is content digest; alias resolved before policy; grants pin alias and digest | `helix-policy::aliases` | POL-1 rules 2, 10 | [ ] |
 | B2 | Blank linker; unlinked imports fail closed | `runtime::link` | RT-1, RT-12 | [ ] |
-| B3 | Filesystem via cap-std, `O_NOFOLLOW`, `FileGrant` and `DirGrant` | `runtime::fs` | RT-2, RT-3, RT-4 | [ ] |
+| B3 | Filesystem via cap-std, `O_NOFOLLOW`, `FileGrant` and `DirGrant` | `runtime::fs` | RT-2, RT-3, RT-4 | [x] |
 | B4 | HTTP authority and method enforced in host handler | `runtime::http` | RT-8, adversarial `slowhost` | [ ] |
-| B5 | Memory ceiling via `ResourceLimiter`; table growth capped | `runtime::limits` | RT-6 | [ ] |
-| B6 | Guest code that does not yield is preempted at `preempt_ticks`; host calls are cancelled at `wall_clock_ms` | `runtime::preempt` | RT-5, BENCH-8 | [ ] |
+| B5 | Memory ceiling via `ResourceLimiter`; table growth capped | `runtime::limits` | RT-6 | [x] |
+| B6 | Guest code that does not yield is preempted at `preempt_ticks`; host calls are cancelled at `wall_clock_ms` | `runtime::preempt` | RT-5, BENCH-8 | [x] |
 | B7 | Wall clock via cancellation token in every host fn | `runtime::host::*` | RT-8 | [ ] |
-| B8 | Fresh `Store` per invocation; nothing reused | `runtime::invoke` | RT-10 | [ ] |
+| B8 | Fresh `Store` per invocation; nothing reused | `runtime::invoke` | RT-10 | [x] |
 | B9 | Only `unsafe` is `Component::deserialize`, artifacts written only by `helix-ctl` with dir perms 0700 | `runtime::artifact` | ST-4, runbook | [ ] |
 | B10 | Environment interface is never linked because it does not exist in v1 | `runtime::link` | RT-12 | [ ] |
 
@@ -48,7 +48,7 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | D1 | `Granted` and terminal records synced before response (group commit) | `helix-audit::Writer` | AUD-2, AUD-8 | [ ] |
 | D2a | Local hash chain verified nightly (corruption, truncation, non-adversarial damage) | runbook section 5 | AUD-1, AUD-3 | [ ] |
 | D2b | Chain verified against off-host witnesses nightly (adversarial rewrite older than one witness interval) | runbook section 5; `verify --witnesses` | AUD-9 | [ ] |
-| D3 | Every invocation writes a terminal record even on panic | `runtime::invoke` guard | GW-7 | [ ] |
+| D3 | Every invocation writes a terminal record even on panic | `runtime::invoke` guard | GW-7 | [x] |
 | D4 | Audit write failure refuses instantiation (`-32030`) | `helix-audit::Writer`, gateway error map | AUD-6, AUD-7 | [ ] |
 
 ## E. Process

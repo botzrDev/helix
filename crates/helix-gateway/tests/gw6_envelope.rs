@@ -155,7 +155,7 @@ async fn health_unknown_method_batch_and_invoke_seam() {
     let v: Value = resp.json().await.unwrap();
     assert_eq!(v["error"]["code"], json!(-32600));
 
-    // invoke builds Request seam then returns not_wired (-32004)
+    // invoke without Authorization → -32001 (HLX-33 replaced stub identity)
     let resp = client
         .post(format!("{base}/"))
         .header("content-type", "application/json")
@@ -166,9 +166,8 @@ async fn health_unknown_method_batch_and_invoke_seam() {
         .await
         .unwrap();
     let v: Value = resp.json().await.unwrap();
-    assert_eq!(v["error"]["code"], json!(-32004));
-    assert_eq!(v["error"]["data"]["reason"], json!("not_wired"));
-    assert_eq!(v["error"]["data"]["request_id"].as_str().unwrap().len(), 26);
+    assert_eq!(v["error"]["code"], json!(-32001));
+    assert_eq!(v["error"]["data"]["reason"], json!("signature"));
 
     // wrong content-type
     let resp = client

@@ -22,7 +22,7 @@ use crate::envelope::ParsedRequest;
 pub struct Request {
     /// ULID for this invocation tree root.
     pub id: RequestId,
-    /// Authenticated agent identity (stubbed until HLX-33).
+    /// Authenticated agent identity (`EdDSA` JWT + thumbprint; HLX-33).
     pub identity: Identity,
     /// Resolved tool digest (alias already resolved against `snapshot`).
     pub tool: ToolDigest,
@@ -49,7 +49,7 @@ pub enum RequestBuildError {
 impl Request {
     /// Build a [`Request`] from a parsed `helix.invoke` envelope.
     ///
-    /// `identity` is supplied by the auth layer (HLX-33); callers may pass a
+    /// `identity` is supplied by `auth::authenticate`; callers may pass a
     /// placeholder for envelope-only tests.
     ///
     /// # Errors

@@ -15,13 +15,14 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use helix_audit::AuditHealth;
-use helix_caps::{Identity, RequestId};
+use helix_caps::RequestId;
 use helix_policy::PolicyHolder;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 
-use crate::config::{GatewayConfig, HealthDetail};
+use crate::auth::{authenticate, JwksCache, VerificationKeys, VerifyParams, METRIC_AUTH_FAILED};
+use crate::config::{DpopMode, GatewayConfig, HealthDetail};
 use crate::envelope::{parse_envelope, EnvelopeOutcome, ParsedRequest};
 use crate::health::HealthStatus;
 use crate::request::{Request, RequestBuildError};
@@ -34,21 +35,38 @@ pub struct GatewayState {
     policy: Arc<PolicyHolder>,
     artifacts_loaded: Arc<AtomicU64>,
     audit_health: Arc<std::sync::Mutex<AuditHealth>>,
-    /// Placeholder identity until HLX-33 wires `EdDSA` JWT verification.
-    stub_identity: Identity,
+    /// JWKS cache (static keys in tests; URL refresh in production).
+    jwks: Arc<JwksCache>,
+    /// JWT verification parameters (`iss` / `aud`).
+    verify: Arc<VerifyParams>,
 }
 
 impl GatewayState {
-    /// Construct state from config + live policy holder.
+    /// Construct state from config + live policy holder + JWKS cache.
     #[must_use]
-    pub fn new(config: GatewayConfig, policy: PolicyHolder) -> Self {
+    pub fn new(config: GatewayConfig, policy: PolicyHolder, jwks: JwksCache) -> Self {
+        let verify = VerifyParams {
+            issuer: config.issuer.clone(),
+            audience: config.audience.clone(),
+        };
         Self {
             config: Arc::new(config),
             policy: Arc::new(policy),
             artifacts_loaded: Arc::new(AtomicU64::new(0)),
             audit_health: Arc::new(std::sync::Mutex::new(AuditHealth::Ok)),
-            stub_identity: Identity::from_bytes([0u8; 32]),
+            jwks: Arc::new(jwks),
+            verify: Arc::new(verify),
         }
+    }
+
+    /// Convenience for tests: empty JWKS (auth will fail until keys are loaded).
+    #[must_use]
+    pub fn new_unenforced(config: GatewayConfig, policy: PolicyHolder) -> Self {
+        Self::new(
+            config,
+            policy,
+            JwksCache::from_keys(VerificationKeys::new()),
+        )
     }
 
     /// Override `artifacts_loaded` (tests / later runtime wiring).
@@ -67,6 +85,12 @@ impl GatewayState {
     #[must_use]
     pub fn health_detail(&self) -> HealthDetail {
         self.config.health_detail
+    }
+
+    /// `DPoP` mode.
+    #[must_use]
+    pub fn dpop_mode(&self) -> DpopMode {
+        self.config.dpop
     }
 
     fn health_status(&self) -> HealthStatus {
@@ -95,6 +119,8 @@ pub struct GatewayRuntime {
 impl GatewayRuntime {
     /// Bind `config.listen` and serve JSON-RPC.
     ///
+    /// Starts a JWKS refresh task when `jwks_url` is an `http(s)` URL.
+    ///
     /// # Errors
     ///
     /// Returns I/O errors from bind.
@@ -102,7 +128,44 @@ impl GatewayRuntime {
         config: GatewayConfig,
         policy: PolicyHolder,
     ) -> Result<Self, std::io::Error> {
-        let state = GatewayState::new(config.clone(), policy);
+        let jwks = JwksCache::new(config.jwks_url.clone(), config.jwks_refresh_s);
+        let client = reqwest::Client::new();
+        // Best-effort initial fetch; failures leave empty keys (auth fails closed).
+        let _ = jwks.refresh_once(&client).await;
+
+        let state = GatewayState::new(config.clone(), policy, jwks);
+        let app = router(state.clone());
+        let listener = TcpListener::bind(config.listen).await?;
+        let local_addr = listener.local_addr()?;
+        let mut join = JoinSet::new();
+
+        if config.jwks_url.starts_with("http://") || config.jwks_url.starts_with("https://") {
+            state.jwks.spawn_refresh(&mut join, client);
+        }
+
+        join.spawn(async move {
+            let _ = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+        Ok(Self {
+            join,
+            local_addr,
+            state,
+        })
+    }
+
+    /// Start with a pre-built state (integration tests with static JWKS).
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O errors from bind.
+    pub async fn start_with_state(
+        config: GatewayConfig,
+        state: GatewayState,
+    ) -> Result<Self, std::io::Error> {
         let app = router(state.clone());
         let listener = TcpListener::bind(config.listen).await?;
         let local_addr = listener.local_addr()?;
@@ -167,7 +230,7 @@ async fn rpc_handler(
 
     match parse_envelope(&body) {
         EnvelopeOutcome::Err(err) => (StatusCode::OK, Json(err)).into_response(),
-        EnvelopeOutcome::Ok(parsed) => dispatch(&state, &parsed).into_response(),
+        EnvelopeOutcome::Ok(parsed) => dispatch(&state, &headers, &parsed).into_response(),
     }
 }
 
@@ -209,13 +272,13 @@ fn log_source(state: &GatewayState, peer: IpAddr, headers: &HeaderMap) {
     }
 }
 
-fn dispatch(state: &GatewayState, parsed: &ParsedRequest) -> Json<Value> {
+fn dispatch(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedRequest) -> Json<Value> {
     match parsed.method.as_str() {
         "helix.health" => {
             let body = state.health_json();
             Json(rpc::success(parsed.id.as_ref(), &body))
         }
-        "helix.invoke" => dispatch_invoke(state, parsed),
+        "helix.invoke" => dispatch_invoke(state, headers, parsed),
         // `helix.describe` / `helix.nonce` land in later M5 tickets.
         _ => Json(rpc::error(
             parsed.id.as_ref(),
@@ -225,15 +288,47 @@ fn dispatch(state: &GatewayState, parsed: &ParsedRequest) -> Json<Value> {
     }
 }
 
-fn dispatch_invoke(state: &GatewayState, parsed: &ParsedRequest) -> Json<Value> {
+fn authorization_value(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+}
+
+fn dispatch_invoke(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    parsed: &ParsedRequest,
+) -> Json<Value> {
+    let keys = &state.jwks.load().keys;
+    // Proof-key binding is HLX-34; Bearer / DPoP-scheme token only here.
+    let identity = match authenticate(
+        authorization_value(headers),
+        state.config.dpop,
+        keys,
+        state.verify.as_ref(),
+        None,
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            // Metric already incremented inside AuthError::new.
+            let _ = METRIC_AUTH_FAILED;
+            return Json(rpc::error(
+                parsed.id.as_ref(),
+                RpcCode::Unauthenticated,
+                Some(json!({ "reason": e.reason.as_str() })),
+            ));
+        }
+    };
+
     let snapshot = state.policy.guard();
     let request_id = next_request_id();
-    match Request::from_invoke(parsed, state.stub_identity, snapshot, request_id) {
+    match Request::from_invoke(parsed, identity, snapshot, request_id) {
         Ok(req) => {
-            // Pipeline (auth → policy → runtime) is HLX-33…HLX-36. Seam is built.
+            // Pipeline (policy → runtime) is HLX-35…HLX-36. Auth + seam are live.
             let data = json!({
                 "reason": "not_wired",
                 "request_id": request_id_string(req.id),
+                "identity_bound": true,
             });
             let _ = (
                 req.identity,

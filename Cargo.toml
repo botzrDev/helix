@@ -50,6 +50,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 hmac = "0.12"
 url = "2"
 httpdate = "1"
+jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 
 [workspace.lints.rust]
 unexpected_cfgs = "warn"

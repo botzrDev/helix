@@ -25,4 +25,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "payload_validator"
+path = "fuzz_targets/payload_validator.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

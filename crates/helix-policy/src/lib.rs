@@ -9,6 +9,8 @@
 //! M2-04 (HLX-17): operator helpers for `helix-ctl policy check` / `explain` /
 //! `reload` ([`tooling`]).
 //!
+//! M5-04 (HLX-35): [`input_schema`] Draft 2020-12 subset for tool payloads.
+//!
 //! No `runtime::delegate` / wasmtime (M4-08).
 //!
 //! Cites: `policy-format.md` §§1–5, ADR-008 A.2/A.3/A.4/C.1/C.2/C.3/E.1,
@@ -23,6 +25,7 @@ mod file;
 mod fs;
 mod guard;
 mod ids;
+pub mod input_schema;
 mod resolve;
 mod store;
 mod tooling;

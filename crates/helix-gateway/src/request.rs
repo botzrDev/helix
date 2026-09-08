@@ -26,7 +26,7 @@ pub struct Request {
     pub identity: Identity,
     /// Resolved tool digest (alias already resolved against `snapshot`).
     pub tool: ToolDigest,
-    /// Raw JSON params `input` object as bytes (schema validation is HLX-35).
+    /// Raw JSON params `input` object as bytes (validated by [`crate::validate::payload`]).
     pub payload: Bytes,
     /// Policy snapshot captured at admission (ADR-008 C.3).
     pub snapshot: PolicyGuard,

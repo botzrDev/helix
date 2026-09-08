@@ -31,6 +31,7 @@ use crate::envelope::{parse_envelope, EnvelopeOutcome, ParsedRequest};
 use crate::health::HealthStatus;
 use crate::request::{Request, RequestBuildError};
 use crate::rpc::{self, RpcCode};
+use crate::validate::{self, SchemaRegistry};
 
 /// Shared gateway state.
 #[derive(Clone)]
@@ -45,6 +46,8 @@ pub struct GatewayState {
     verify: Arc<VerifyParams>,
     /// `DPoP` runtime (nonces + `jti`); `None` when mode is `off` and no keys loaded.
     dpop: Option<Arc<DpopRuntime>>,
+    /// Input-schema cache keyed by tool digest (HLX-24 signature / HLX-35).
+    schemas: Arc<arc_swap::ArcSwap<SchemaRegistry>>,
 }
 
 impl GatewayState {
@@ -68,6 +71,7 @@ impl GatewayState {
             jwks: Arc::new(jwks),
             verify: Arc::new(verify),
             dpop: dpop.map(Arc::new),
+            schemas: Arc::new(arc_swap::ArcSwap::from_pointee(SchemaRegistry::new())),
         }
     }
 
@@ -110,6 +114,17 @@ impl GatewayState {
     #[must_use]
     pub fn dpop_runtime(&self) -> Option<&DpopRuntime> {
         self.dpop.as_deref()
+    }
+
+    /// Replace the input-schema registry (artifact load / tests).
+    pub fn set_schemas(&self, registry: SchemaRegistry) {
+        self.schemas.store(Arc::new(registry));
+    }
+
+    /// Current schema registry snapshot.
+    #[must_use]
+    pub fn schemas(&self) -> arc_swap::Guard<Arc<SchemaRegistry>> {
+        self.schemas.load()
     }
 
     fn health_status(&self) -> HealthStatus {
@@ -489,9 +504,27 @@ fn dispatch_invoke(state: &GatewayState, headers: &HeaderMap, parsed: &ParsedReq
     let request_id = next_request_id();
     let response = match Request::from_invoke(parsed, identity, snapshot, request_id) {
         Ok(req) => {
+            let rid = request_id_string(req.id);
+            // Authenticated → Authorized: validate payload before instantiate (HLX-35).
+            if let Some(schema) = state.schemas.load().get(&req.tool) {
+                if let Err(err) = validate::payload(schema.as_ref(), &req.payload) {
+                    return with_dpop_nonce(
+                        (
+                            StatusCode::OK,
+                            Json(validate::invalid_params(
+                                parsed.id.as_ref(),
+                                &err,
+                                Some(&rid),
+                            )),
+                        )
+                            .into_response(),
+                        dpop_nonce_hdr.as_deref(),
+                    );
+                }
+            }
             let data = json!({
                 "reason": "not_wired",
-                "request_id": request_id_string(req.id),
+                "request_id": rid,
                 "identity_bound": true,
             });
             let _ = (

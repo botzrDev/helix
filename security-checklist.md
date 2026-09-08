@@ -10,7 +10,7 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | A2 | `sub` equals `cnf.jkt` equals the JWK thumbprint of the DPoP key | `auth::bind_identity` | GW-2 | [ ] |
 | A3a | DPoP nonce valid across gateways sharing `nonce_key` | `auth::dpop` stateless HMAC nonce | GW-12 | [ ] |
 | A3b | DPoP `jti` replay refused within one process; bounded cache | `auth::dpop::JtiCache` | GW-3, GW-14 | [ ] |
-| A4 | Payload validated against tool schema before instantiation | `validate::payload` | GW-5, GW-10 | [ ] |
+| A4 | Payload validated against tool schema before instantiation | `validate::payload` / `helix_policy::input_schema` | GW-5, GW-10 | [x] |
 | A5 | Policy lookup is exact-match; no wildcards | `helix-policy::lookup` | POL-3 | [ ] |
 | A6 | Delegation cannot escalate | `runtime::delegate`, `helix-caps::attenuate` | CAPS-4, CAPS-5, POL-6, RT-13 | [x] |
 | A7 | Output bounded | `runtime::BoundedWriter` | RT-7 | [x] |

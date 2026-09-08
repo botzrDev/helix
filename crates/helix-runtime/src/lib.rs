@@ -61,6 +61,7 @@ pub mod bounded;
 pub mod cancel;
 pub mod config;
 pub mod delegate;
+mod delegate_bindgen;
 pub mod engine;
 pub mod error;
 pub mod fs;
@@ -106,9 +107,9 @@ pub use http::{
 };
 pub use invoke::{
     deliver_output, invoke, invoke_pooled, invoke_with_cancel, invoke_with_cancel_pooled,
-    preempt_deadline_ticks, run_limited, run_limited_pooled, InvokeHost, InvokeSuccess, NopHook,
-    RecordingHook, TerminalGuard, TerminalHook, TerminalKind, TerminalRecord, METRIC_KILL_MEMORY,
-    METRIC_KILL_OUTPUT,
+    invoke_with_delegation, preempt_deadline_ticks, run_limited, run_limited_pooled, InvokeHost,
+    InvokeSuccess, NopHook, RecordingHook, TerminalGuard, TerminalHook, TerminalKind,
+    TerminalRecord, METRIC_KILL_MEMORY, METRIC_KILL_OUTPUT,
 };
 pub use limits::{HelixLimiter, DEFAULT_TABLE_ELEMENTS};
 pub use link::{link, link_with_names, linked_names, provision_pre, provision_pre_with_delegate};

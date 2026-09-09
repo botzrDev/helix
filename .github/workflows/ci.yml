@@ -55,8 +55,13 @@ jobs:
               exit 1
             fi
           done
-          if grep -R -q --include='*.rs' 'forbid(unsafe_code)' crates/helix-runtime/src; then
+          # Ignore // and //! lines so crate docs can mention the forbid policy.
+          if grep -R --include='*.rs' -n 'forbid(unsafe_code)' crates/helix-runtime/src \
+            | grep -vE ':[0-9]+:[[:space:]]*//' \
+            | grep -q .; then
             echo "helix-runtime must remain the unsafe exception (no forbid)"
+            grep -R --include='*.rs' -n 'forbid(unsafe_code)' crates/helix-runtime/src \
+              | grep -vE ':[0-9]+:[[:space:]]*//' || true
             exit 1
           fi
           if ! grep -q 'allow(unsafe_code)' crates/helix-runtime/src/artifact.rs; then

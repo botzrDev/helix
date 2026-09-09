@@ -44,8 +44,8 @@
 //! `define_unknown_imports_as_traps` so registration does not require a
 //! request-scoped capability set. Request-path provision uses [`link::link`].
 //!
-//! Safety (ST-4 / ADR-006): this crate is the workspace exception to
-//! `#![forbid(unsafe_code)]`. The single permitted `unsafe` site is
+//! Safety (ST-4 / ADR-006): this crate is the workspace exception to the
+//! crate-level forbid of unsafe code. The single permitted `unsafe` site is
 //! [`artifact::deserialize_component`] (`Component::deserialize`), confined to
 //! `artifact.rs` (module-level allow for the deserialize call).
 //!

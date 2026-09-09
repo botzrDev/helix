@@ -10,3 +10,7 @@ tests/fixtures/hello-world/src/bindings.rs
 **/fuzz/target/
 **/fuzz/corpus/
 **/fuzz/artifacts/
+
+# Criterion reports
+target/criterion/
+benches/target/

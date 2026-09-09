@@ -13,6 +13,8 @@ Hardware-Enforced Logic & Interaction eXecution. A Rust-native, capability-based
 | `helix-gateway` | axum JSON-RPC gateway |
 | `helix-sdk` | Author-facing SDK |
 | `helix-ctl` | Operator CLI |
+| `helix-bench` | E2E load harness + result compare (HLX-40) |
+| `helix-benches` | Criterion BENCH-1..3 (`benches/`) |
 
 Empty crates on purpose: HLX-5 is workspace + lints + CI only.
 
@@ -42,6 +44,7 @@ Read in this order. Interface files landed with HLX-9 (PR #3). Remaining docs la
 | [`runbook.md`](runbook.md) | Deployment, config, registration, audit / witness handling, alerts, incidents |
 | [`tool-author-guide.md`](tool-author-guide.md) | External-facing: build, test, delegate, and ship a tool |
 | [`security-checklist.md`](security-checklist.md) | Threat model rows mapped to code paths and tests; release gate |
+| [`docs/fuzz-nightly.md`](docs/fuzz-nightly.md) | Nightly 4h fuzz (GW-8..10), corpus, crash issues, E2 seven-clean-nights gate (HLX-43) |
 
 Cycle 1 facts (decided 2026-09-03) are written into the matching docs above. Linear HLX-1 through HLX-4 stay open until those tickets are closed deliberately:
 

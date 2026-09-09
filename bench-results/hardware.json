@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "status": "placeholder",
+  "machine": "hetzner-ax42-1",
+  "cpu": "AMD Ryzen 7 PRO 8700GE (pinned in protocol; not measured)",
+  "memory_gib": 64,
+  "storage": "2x512 GB NVMe RAID1",
+  "os": "Ubuntu 24.04 (planned)",
+  "fio_fdatasync_latency_ns": null,
+  "granted_audit_record_bytes": null,
+  "rust_toolchain": null,
+  "wasmtime": null,
+  "holes": [
+    "AX42-1 / LTD not provisioned — HLX-1 D-2 is paper-only until hardware lands.",
+    "HLX-7 (M0-03 walking skeleton) parked; no M0-03 skeleton results checked in.",
+    "HLX-8 / D-5 BENCH-4 numeric gate unset; provisional design target 16000 req/s @ c=64 p99≤5ms.",
+    "fio --rw=write --fsync=1 --bs=4k latency and Granted CBOR size (~200 B estimate) pending AX.",
+    "Exit criterion 'BENCH-1..5 gated green on reference hardware' is NOT met (HLX-40 ships harness only)."
+  ]
+}

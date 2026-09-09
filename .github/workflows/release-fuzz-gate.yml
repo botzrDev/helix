@@ -1,0 +1,54 @@
+# HLX-43 / security-checklist E2: refuse release tags until seven consecutive
+# clean nightly fuzz nights are recorded on the fuzz-status branch.
+#
+# How release tags check the counter:
+# 1. Nightly fuzz (nightly-fuzz.yml) updates consecutive_clean_nights on the
+#    dedicated `fuzz-status` branch (and uploads the JSON artifact).
+# 2. Pushing a `v*` tag (or running this workflow manually) loads that JSON
+#    and runs `scripts/fuzz-clean-nights.sh check`.
+# 3. The job fails unless consecutive_clean_nights >= required_for_release (7).
+# 4. Any nightly crash resets the counter to 0 (see consolidate job).
+#
+# Hole: until seven real green nights land on main, this gate correctly FAILS.
+# Do not claim E2 satisfied from this PR alone.
+name: Release fuzz gate
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2-seven-clean-nights:
+    name: E2 seven consecutive clean nights
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Load clean-nights status
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz-status
+          if git fetch origin fuzz-status:refs/remotes/origin/fuzz-status 2>/dev/null; then
+            git show origin/fuzz-status:clean-nights.json > fuzz-status/clean-nights.json
+            echo "Loaded fuzz-status/clean-nights.json from origin/fuzz-status"
+          elif [[ -f fuzz-status/clean-nights.json ]]; then
+            echo "Loaded in-tree fuzz-status/clean-nights.json (bootstrap; likely count=0)"
+          else
+            echo "No fuzz-status/clean-nights.json found (branch or tree)." >&2
+            exit 1
+          fi
+          cat fuzz-status/clean-nights.json
+
+      - name: Enforce E2 gate
+        run: |
+          set -euo pipefail
+          ./scripts/fuzz-clean-nights.sh check fuzz-status/clean-nights.json

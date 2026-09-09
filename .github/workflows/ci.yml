@@ -49,7 +49,7 @@ jobs:
       - name: Require forbid(unsafe_code) except helix-runtime; one unsafe in artifact.rs
         run: |
           set -euo pipefail
-          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-sdk-macro helix-ctl; do
+          for crate in helix-caps helix-policy helix-gateway helix-audit helix-sdk helix-sdk-macro helix-ctl helix-bench; do
             if ! grep -R -q --include='*.rs' 'forbid(unsafe_code)' "crates/${crate}/src"; then
               echo "missing #![forbid(unsafe_code)] in ${crate}"
               exit 1
@@ -179,7 +179,7 @@ jobs:
       - name: Smoke-run envelope fuzz target
         working-directory: crates/helix-gateway
         # Full GW-8 gate is `cargo fuzz run envelope -- -max_total_time=600` (10 min)
-        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # per PR once runners allow it; 4h nightly is Nightly fuzz (HLX-43 / nightly-fuzz.yml).
         # This smoke keeps the target compiling and free of immediate panics.
         run: cargo +nightly fuzz run envelope -- -max_total_time=30
 
@@ -201,7 +201,7 @@ jobs:
       - name: Smoke-run dpop_proof fuzz target
         working-directory: crates/helix-gateway
         # Full GW-9 gate is `cargo fuzz run dpop_proof -- -max_total_time=600` (10 min)
-        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # per PR once runners allow it; 4h nightly is Nightly fuzz (HLX-43 / nightly-fuzz.yml).
         # This smoke keeps the target compiling and free of immediate panics.
         run: cargo +nightly fuzz run dpop_proof -- -max_total_time=30
 
@@ -223,7 +223,7 @@ jobs:
       - name: Smoke-run payload_validator fuzz target
         working-directory: crates/helix-gateway
         # Full GW-10 gate is `cargo fuzz run payload_validator -- -max_total_time=600` (10 min)
-        # per PR once runners allow it; 4h nightly lands with M7-04 / HLX-43.
+        # per PR once runners allow it; 4h nightly is Nightly fuzz (HLX-43 / nightly-fuzz.yml).
         # This smoke keeps the target compiling and free of immediate panics.
         run: cargo +nightly fuzz run payload_validator -- -max_total_time=30
 
@@ -242,3 +242,15 @@ jobs:
       - name: Gateway adversarial namespace + kill e2e
         run: |
           cargo test -p helix-gateway --test adversarial_gateway --test gw15_concurrency --test gw6_envelope --test gw1_gw2_auth --test gw3_gw4_gw14_dpop
+
+  hlx40-bench:
+    name: HLX-40 BENCH-1..3 microbench smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Microbench smoke + helix-bench scaffold
+        run: ./scripts/ci-bench.sh

@@ -2,7 +2,7 @@
 //!
 //! Must not panic on any input. PR CI runs a short smoke; full 10 minutes is
 //! the same schedule as GW-8 (`-max_total_time=600` per PR when runners allow;
-//! 4h nightly with M7-04 / HLX-43).
+//! 4h nightly via nightly-fuzz.yml (HLX-43)).
 
 #![no_main]
 

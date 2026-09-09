@@ -10,6 +10,8 @@ members = [
     "crates/helix-sdk-macro",
     "crates/helix-sdk-wit",
     "crates/helix-ctl",
+    "crates/helix-bench",
+    "benches",
 ]
 
 [workspace.package]

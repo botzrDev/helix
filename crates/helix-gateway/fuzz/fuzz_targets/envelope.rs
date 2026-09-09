@@ -1,7 +1,7 @@
 //! GW-8: fuzz the JSON-RPC envelope parser (`cargo fuzz run envelope`).
 //!
 //! Must not panic on any input. PR CI runs a short smoke; full 10 minutes is
-//! documented in `.github/workflows/ci.yml` / nightly (M7-04 / HLX-43).
+//! documented in `.github/workflows/ci.yml`; 4h nightly via nightly-fuzz.yml (HLX-43).
 
 #![no_main]
 

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "consecutive_clean_nights": 0,
+  "required_for_release": 7,
+  "last_night_utc": null,
+  "last_status": "never_run",
+  "last_run_url": null,
+  "targets": ["envelope", "dpop_proof", "payload_validator"],
+  "notes": "HLX-43 / E2 wiring only. Do not claim seven clean nights until this counter reaches 7 from real nightly runs on main. Counter resets to 0 on any crash or failed target."
+}

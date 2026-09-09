@@ -80,6 +80,9 @@ Test IDs are stable and referenced from the milestone plan. A milestone exits wh
 | GW-8 | fuzz | `cargo fuzz run envelope` 10 minutes per PR, 4 hours nightly, no panics |
 | GW-9 | fuzz | `cargo fuzz run dpop_proof` same schedule |
 | GW-10 | fuzz | `cargo fuzz run payload_validator` same schedule |
+
+Nightly 4h coverage for GW-8..GW-10 is workflow `Nightly fuzz` (`nightly-fuzz.yml`, HLX-43).
+PR CI keeps 30s smokes. E2 seven-clean-nights gate: `docs/fuzz-nightly.md`.
 | GW-12 | integration | Two gateway instances sharing `nonce_key`; nonce issued by A accepted by B; proof with a nonce from three buckets ago refused by both; challenge flow yields a nonce accepted on retry; `helix.nonce` from A accepted by B |
 | GW-14 | unit | The `jti` cache at capacity refuses a fresh proof and increments `helix_dpop_jti_full_total`; after the window passes, insertion succeeds |
 | GW-15 | integration | Per-identity concurrency cap refuses the 33rd concurrent root request (`-32002` reason `concurrency`); a second identity is unaffected |

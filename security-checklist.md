@@ -61,6 +61,12 @@ Maps each threat-model row in the PRD to the code paths and tests that address i
 | E4 | Runbook incident table validated by an operator who did not write it | [ ] |
 | E5 | Residual risks listed below reviewed and accepted | [ ] |
 
+> **E2 / HLX-43:** Nightly 4h fuzz jobs, corpus cache, crash→GitHub `gateway` issues, and the
+> seven-clean-nights counter / release-tag gate are **wired** (`nightly-fuzz.yml`,
+> `release-fuzz-gate.yml`, `docs/fuzz-nightly.md`). The checkbox stays unchecked until
+> `fuzz-status` reports `consecutive_clean_nights >= 7` from real nights on `main`.
+> Do not claim seven clean nights from the wiring PR alone.
+
 ## Residual risks (accepted for v1, per PRD non-goals)
 
 - Cross-sandbox side channels (timing, cache).

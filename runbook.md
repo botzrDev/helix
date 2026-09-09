@@ -152,3 +152,13 @@ Serialized artifacts are version-bound. Procedure: deploy the new binary to one 
 | Latency p99 spike, `helix_audit_sync_seconds` high | Storage; move audit dir or check NVMe health |
 | `helix_pool_in_use` pinned at max | Long-running tools; lower `wall_clock_ms` or scale out |
 | `helix_audit_witness_lag_s` > 300 | Witness sink unreachable or misconfigured SigV4; local chain still appends |
+
+## 11. Nightly fuzz and E2 release gate (HLX-43)
+
+Gateway fuzz targets (`envelope`, `dpop_proof`, `payload_validator`) run for four hours each on the **Nightly fuzz** workflow. PR CI keeps 30s smokes only.
+
+- Status counter: `fuzz-status` branch → `clean-nights.json` (also bootstrapped in-tree under `fuzz-status/`).
+- Crashes open GitHub issues labeled `gateway`; mirror into Linear manually (see `docs/fuzz-nightly.md`).
+- Cutting a `v*` tag runs **Release fuzz gate**, which fails unless seven consecutive clean nights are recorded.
+- Until those nights exist, the gate is expected to fail — that is intentional.
+

@@ -1,0 +1,235 @@
+# HLX-43 / M7-04: nightly 4h fuzz for GW-8..GW-10; E2 consecutive clean nights.
+# PR CI keeps short smokes in ci.yml; full duration only here (schedule / manual).
+name: Nightly fuzz
+
+on:
+  schedule:
+    # 05:00 UTC — after typical weekday CI load.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: "libFuzzer -max_total_time seconds per target (default 14400 = 4h)"
+        required: false
+        default: "14400"
+
+concurrency:
+  group: nightly-fuzz-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }} (4h)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [envelope, dpop_proof, payload_validator]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install C++ toolchain for libFuzzer
+        run: sudo apt-get update && sudo apt-get install -y g++
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/helix-gateway/fuzz
+
+      - name: Restore fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: crates/helix-gateway/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run nightly fuzz target
+        id: fuzz
+        working-directory: crates/helix-gateway
+        env:
+          FUZZ_MAX_TOTAL_TIME: ${{ inputs.max_total_time || '14400' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "fuzz/corpus/${{ matrix.target }}" "fuzz/artifacts/${{ matrix.target }}"
+          "${GITHUB_WORKSPACE}/scripts/fuzz-nightly-run.sh" "${{ matrix.target }}" "${FUZZ_MAX_TOTAL_TIME}"
+
+      - name: Upload corpus (persist across nights via cache + artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: crates/helix-gateway/fuzz/corpus/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}-${{ github.run_id }}
+          path: crates/helix-gateway/fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: File GitHub issue on crash (label gateway)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const target = '${{ matrix.target }}';
+            const title = `[fuzz] nightly crash: ${target}`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `Nightly cargo-fuzz target \`${target}\` failed.`,
+              '',
+              `- Workflow run: ${runUrl}`,
+              `- Gate: GW-8/GW-9/GW-10 nightly (HLX-43 / M7-04)`,
+              `- Security checklist: E2 consecutive clean nights **reset**`,
+              '',
+              'Crash inputs (if any) are attached as the `fuzz-crash-*` artifact on the failed job.',
+              '',
+              '### Linear mirror',
+              'CI files GitHub issues (label `gateway`) because a Linear API token is not assumed in Actions.',
+              'Mirror this issue into Linear HELIX / Helix-Dev (label or project field `gateway`) and link back here.',
+              'Optional future automation: repository secret `LINEAR_API_KEY` + a follow-up workflow step.',
+            ].join('\n');
+
+            const labels = ['gateway'];
+            // Ensure label exists (created in HLX-43); ignore if missing permissions race.
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'gateway',
+              });
+            } catch (e) {
+              if (e.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'gateway',
+                  color: '0E8A16',
+                  description: 'Gateway / fuzz / JSON-RPC surface',
+                });
+              } else {
+                throw e;
+              }
+            }
+
+            const q = `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open label:gateway in:title "${title}"`;
+            const found = await github.rest.search.issuesAndPullRequests({ q });
+            if (found.data.total_count > 0) {
+              const existing = found.data.items[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Recurrence on ${runUrl}`,
+              });
+              core.info(`Commented on existing issue #${existing.number}`);
+              return;
+            }
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels,
+            });
+            core.info(`Opened issue #${issue.data.number}`);
+
+  consolidate:
+    name: E2 consecutive clean nights
+    runs-on: ubuntu-latest
+    needs: fuzz
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Prepare status working copy
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fuzz-status-work
+          if git fetch origin fuzz-status:refs/remotes/origin/fuzz-status 2>/dev/null; then
+            git show origin/fuzz-status:clean-nights.json > /tmp/fuzz-status-work/clean-nights.json
+            echo "Restored counter from origin/fuzz-status"
+          else
+            cp fuzz-status/clean-nights.json /tmp/fuzz-status-work/clean-nights.json
+            echo "Bootstrapped counter from in-tree fuzz-status/clean-nights.json"
+          fi
+
+      - name: Update consecutive clean nights counter
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          STATUS=/tmp/fuzz-status-work/clean-nights.json
+          result='${{ needs.fuzz.result }}'
+          if [[ "${result}" == "success" ]]; then
+            ./scripts/fuzz-clean-nights.sh record-clean "${STATUS}"
+          else
+            ./scripts/fuzz-clean-nights.sh record-crash "${STATUS}"
+          fi
+          ./scripts/fuzz-clean-nights.sh read "${STATUS}"
+          mkdir -p fuzz-status
+          cp "${STATUS}" fuzz-status/clean-nights.json
+
+      - name: Publish status to fuzz-status branch
+        # Only mutate the shared counter from main (schedule on default branch).
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp fuzz-status/clean-nights.json "${work}/clean-nights.json"
+          # Dedicated orphan branch: single file, force-updated each night.
+          rm -rf .git-fuzz-status && mkdir -p .git-fuzz-status
+          cp "${work}/clean-nights.json" .git-fuzz-status/clean-nights.json
+          (
+            cd .git-fuzz-status
+            git init -q
+            git checkout -b fuzz-status
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add clean-nights.json
+            git commit -m "fuzz-status: update consecutive clean nights (HLX-43 E2)"
+            # Token stays in env; do not echo. Actions masks secrets in logs.
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git push -f origin fuzz-status
+          )
+
+      - name: Upload status artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-clean-nights-status
+          path: fuzz-status/clean-nights.json
+
+      - name: Fail consolidate when any target crashed
+        if: needs.fuzz.result != 'success'
+        run: |
+          echo "One or more nightly fuzz targets failed; E2 counter reset." >&2
+          exit 1

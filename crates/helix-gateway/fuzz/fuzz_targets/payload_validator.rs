@@ -2,7 +2,7 @@
 //!
 //! Must not panic on any input. PR CI runs a short smoke; full duration is
 //! `cargo fuzz run payload_validator -- -max_total_time=600` (10 min) per PR
-//! when runners allow; 4h nightly lands with M7-04 / HLX-43.
+//! when runners allow; 4h nightly via nightly-fuzz.yml (HLX-43).
 
 #![no_main]
 

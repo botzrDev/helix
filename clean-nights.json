@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "consecutive_clean_nights": 4,
+  "required_for_release": 7,
+  "last_night_utc": "2026-09-12",
+  "last_status": "clean",
+  "last_run_url": "https://github.com/botzrDev/helix/actions/runs/34674635225",
+  "targets": [
+    "envelope",
+    "dpop_proof",
+    "payload_validator"
+  ],
+  "notes": "HLX-43 / E2 wiring only. Do not claim seven clean nights until this counter reaches 7 from real nightly runs on main. Counter resets to 0 on any crash or failed target."
+}
